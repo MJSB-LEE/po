@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoCount PO Audit</title>
+  <link rel="stylesheet" href="styles.css?v=3.4">
+  <!-- SheetJS for Excel Exports -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<!-- Sidebar Navigation -->
+  <aside class="app-sidebar">
+    <div class="sidebar-brand">
+      <span>📊</span>
+      <span>AutoCount Portal</span>
+    </div>
+
+    <ul class="sidebar-menu">
+
+      <li class="menu-group" data-group="sum" onclick="toggleMenuGroup('sum')"><span class="caret">▾</span><span>📊</span> Summary</li>
+      <li class="menu-item child" data-parent="sum" data-tab="tab-po-grn-summary" onclick="switchNavTab('tab-po-grn-summary', this)">
+        Summary PO vs GRN
+      </li>
+      <li class="menu-item child" data-parent="sum" data-tab="tab-month-compare" onclick="switchNavTab('tab-month-compare', this)">
+        Month Comparison
+      </li>
+      <li class="menu-item child" data-parent="sum" data-tab="tab-location-summary" onclick="switchNavTab('tab-location-summary', this)">
+        All Locations Summary
+      </li>
+      <li class="menu-item child" data-parent="sum" data-tab="tab-creditor-bal" onclick="switchNavTab('tab-creditor-bal', this)">
+        Creditor Balances
+      </li>
+
+      <li class="menu-group" data-group="po" onclick="toggleMenuGroup('po')"><span class="caret">▾</span><span>📋</span> PO Audit</li>
+      <li class="menu-item child" data-parent="po" data-tab="tab-po-outstanding" onclick="switchNavTab('tab-po-outstanding', this)">
+        PO Outstanding
+      </li>
+      <li class="menu-item child" data-parent="po" data-tab="tab-po-completed" onclick="switchNavTab('tab-po-completed', this)">
+        PO Completed
+      </li>
+
+      <li class="menu-group" data-group="grn" onclick="toggleMenuGroup('grn')"><span class="caret">▾</span><span>🚚</span> GRN</li>
+      <li class="menu-item child" data-parent="grn" data-tab="tab-grn-details" onclick="switchNavTab('tab-grn-details', this)">
+        GRN Received Listing
+      </li>
+
+      <li class="menu-item menu-bottom" data-tab="tab-upload" onclick="switchNavTab('tab-upload', this)">
+        <span>📤</span> Upload Monthly Files
+      </li>
+      <li class="menu-item" data-tab="tab-settings" onclick="switchNavTab('tab-settings', this)">
+        <span>⚙️</span> Settings &amp; Locations
+      </li>
+    </ul>
+    <div class="app-version" id="appVersion">app.js not loaded</div>
+  </aside>
+
+  <!-- Main Container -->
+  <main class="app-main">
+    <!-- Header Topbar Controls -->
+    <header class="app-topbar">
+      <div class="page-title" id="pageTitleDisplay">6-Month PO Transfer & Outstanding Audit</div>
+
+      <div class="topbar-controls">
+        <div class="header-co-box" style="display:none;">
+          <label for="companyPicker">🏢 Company:</label>
+          <select id="companyPicker" onchange="onCompanyPick(this)"></select>
+        </div>
+        <div class="header-loc-box" style="display:none;">
+          <label>📍 Location:</label>
+          <div class="loc-ms" id="locMS">
+            <button type="button" class="loc-ms-btn" id="locMSBtn" onclick="toggleLocMenu()">🌐 All Locations</button>
+            <div class="loc-ms-panel" id="locMSPanel">
+              <input type="text" id="locMSSearch" placeholder="🔍 Type to find, e.g. TUN or SUBUR" oninput="renderLocMenu()" onkeydown="if(event.key==='Enter'){locMSTickShown();}">
+              <div class="loc-ms-actions">
+                <button type="button" onclick="locMSTickShown()" title="Tick every location in the list below">✓ Tick shown</button>
+                <button type="button" onclick="locMSOnly('main')" title="Locations without -D">Without -D</button>
+                <button type="button" onclick="locMSOnly('direct')" title="Locations ending in -D (Direct Expenses)">Only -D</button>
+                <button type="button" onclick="locMSClear()">↺ All</button>
+              </div>
+              <div class="loc-ms-list" id="locMSList"></div>
+              <div class="loc-ms-foot"><span id="locMSCount" class="muted"></span><button type="button" class="btn btn-excel btn-sm" onclick="toggleLocMenu(false)">Done</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="header-search-box">
+          <span>🔍</span>
+          <input type="text" id="headerSearchInput" placeholder="Search PO, GRN, Creditor, Item..." oninput="onGlobalFilterChange()">
+        </div>
+
+        <div class="header-date-box" title="From = first date of POs / GRNs to show.  To = outstanding is worked out as at this date (every GRN up to this date counts as received).">
+          <label for="dateFrom">📅 From:</label>
+          <input type="date" id="dateFrom" onchange="onGlobalFilterChange()">
+          <label for="grnEndDate">To:</label>
+          <input type="date" id="grnEndDate" onchange="onGlobalFilterChange()">
+        </div>
+
+        <button class="btn btn-settings" onclick="resetFilters()" title="Clear search and reset dates to cover all data">↺ Reset</button>
+        <div class="user-box" id="userBox"></div>
+      </div>
+    </header>
+    <div id="syncBar" class="sync-bar"></div>
+
+    <div class="content-area">
+      <!-- Dynamic KPI Cards -->
+      <section class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">TOTAL PO AMOUNT</div>
+          <div class="kpi-value" id="kpiTotalPO">RM 0.00</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">RECEIVED AGAINST PO</div>
+          <div class="kpi-value green" id="kpiTotalGRN">RM 0.00</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">OUTSTANDING BAL COST</div>
+          <div class="kpi-value orange" id="kpiTotalBal">RM 0.00</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">OUTSTANDING PO LINES</div>
+          <div class="kpi-value blue" id="kpiUntransCount">0 Lines</div>
+        </div>
+      </section>
+
+      <!-- TAB 1: CSV File Upload -->
+      <div id="tab-upload" class="tab-view">
+        <!-- 1. which company -->
+        <div class="up-company">
+          <div class="up-co-left">
+            <div class="up-label">Uploading for company</div>
+            <select id="upCompany" onchange="onUploadCompanyPick(this)"></select>
+            <div class="muted small-text">The company name is also read from each file. If a file belongs to another company you will be asked first.</div>
+          </div>
+          <div class="up-co-stats" id="upCoStats"></div>
+        </div>
+
+        <!-- 2. one drop area for every file -->
+        <div class="up-drop" id="upDrop" onclick="document.getElementById('upFiles').click()"
+             ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')"
+             ondrop="event.preventDefault();this.classList.remove('over');uploadFiles(event.dataTransfer.files)">
+          <div class="up-drop-icon">📤</div>
+          <div class="up-drop-title">Drop this month's files here, or click to choose</div>
+          <div class="up-drop-sub">PO Detail Listing + GRN Detail Listing · CSV or Excel · several files at once is fine</div>
+          <div class="up-drop-types">
+            <span>📁 Purchase Order Detail Listing</span><span>🚚 Goods Received Note Detail Listing</span>
+            <span class="opt">📍 Stock Location Listing <i>(once)</i></span><span class="opt">🏢 Creditor Listing <i>(when new creditors)</i></span>
+          </div>
+          <input type="file" id="upFiles" multiple accept=".csv,.xlsx,.xls" style="display:none" onclick="event.stopPropagation()" onchange="uploadFiles(this.files);this.value=''">
+          <!-- old single inputs (still used by tests / old links) -->
+          <input type="file" id="poFileInput" accept=".csv,.xlsx,.xls" onchange="handlePOFile(event)" style="display:none;">
+          <input type="file" id="grnFileInput" accept=".csv,.xlsx,.xls" onchange="handleGRNFile(event)" style="display:none;">
+          <input type="file" id="locFileInput" accept=".csv,.xlsx,.xls" onchange="handleLocFile(event)" style="display:none;">
+          <input type="file" id="credFileInput" accept=".csv,.xlsx,.xls" onchange="handleCredFile(event)" style="display:none;">
+        </div>
+        <div class="up-steps">
+          <div><b>1</b> In AutoCount export <b>last month only</b> (e.g. 01/10/2026 – 31/10/2026): PO Detail Listing and GRN Detail Listing, with the Location column.</div>
+          <div><b>2</b> Drop both files above. You will see a <b>review</b>: same data, or which PO / GRN were added, removed or changed.</div>
+          <div><b>3</b> Click <b>Accept</b>, then <b>💾 Save to Shared Folder</b> at the top so everyone sees it.</div>
+        </div>
+
+        <!-- 3. what is saved -->
+        <div class="report-paper upload-summary">
+          <div class="upload-summary-head"><h3>Saved months</h3></div>
+          <div id="upGrid"></div>
+          <div class="up-files" id="upFilesInfo"></div>
+          <div id="uploadSummaryText"></div>
+          <div class="file-status-row">
+            <span class="file-status" id="statusPO"></span><span class="file-status" id="statusGRN"></span>
+            <span class="file-status" id="statusLoc"></span><span class="file-status" id="statusCred"></span>
+          </div>
+        </div>
+        <div class="report-paper upload-summary">
+          <div class="upload-summary-head"><h3>Recent uploads</h3></div>
+          <div id="upRecent"></div>
+        </div>
+      </div>
+
+<!-- PO Outstanding: only POs not fully received (as at the end of the chosen month) -->
+<div id="tab-po-outstanding" class="tab-view">
+  <div class="controls-card pout-controls">
+    <div class="sum-ctl">
+      <label><b>Month</b></label> <span id="poOutPick" class="sum-mpick"></span>
+      <label style="margin-left:10px;"><b>Show by</b></label>
+      <select id="poOutGroup" onchange="renderActiveTab()">
+        <option value="po">PO</option>
+        <option value="item">Item</option>
+        <option value="cred">Creditor</option>
+      </select>
+      <button class="btn-small" onclick="poOpenAll('tab-po-outstanding', true)">Open all</button>
+      <button class="btn-small" onclick="poOpenAll('tab-po-outstanding', false)">Close all</button>
+    </div>
+    <div class="btn-actions">
+      <button class="btn btn-print" onclick="printFolders('tab-po-outstanding', false)">🖨️ PDF / Print</button>
+      <button class="btn btn-print" onclick="printFolders('tab-po-outstanding', true)">📄 PDF with details</button>
+      <button class="btn btn-excel" onclick="exportToExcel('poOutTable', 'PO_Outstanding')">📊 Excel</button>
+    </div>
+  </div>
+  <div class="report-paper">
+    <div class="report-header">
+      <div class="company-name">MASIH JAYA SDN BHD</div>
+      <div class="report-title">PO OUTSTANDING — NOT FULLY RECEIVED</div>
+    </div>
+    <div id="poOutBody"></div>
+  </div>
+</div>
+
+<!-- PO Completed: fully received POs by the GRN month that completed them -->
+<div id="tab-po-completed" class="tab-view">
+  <div class="controls-card pout-controls">
+    <div class="sum-ctl">
+      <label><b>GRN month</b></label> <span id="poDonePick" class="sum-mpick"></span>
+      <button class="btn-small" onclick="poOpenAll('tab-po-completed', true)">Open all</button>
+      <button class="btn-small" onclick="poOpenAll('tab-po-completed', false)">Close all</button>
+    </div>
+    <div class="btn-actions">
+      <button class="btn btn-print" onclick="printFolders('tab-po-completed', false)">🖨️ PDF / Print</button>
+      <button class="btn btn-print" onclick="printFolders('tab-po-completed', true)">📄 PDF with details</button>
+      <button class="btn btn-excel" onclick="exportToExcel('poDoneTable', 'PO_Completed')">📊 Excel</button>
+    </div>
+  </div>
+  <div class="report-paper">
+    <div class="report-header">
+      <div class="company-name">MASIH JAYA SDN BHD</div>
+      <div class="report-title">PO COMPLETED — FULLY RECEIVED / CANCELLED</div>
+    </div>
+    <div id="poDoneBody"></div>
+  </div>
+</div>
+
+<!-- TAB 5: GRN Received Listing -->
+      <div id="tab-grn-details" class="tab-view">
+        <div class="controls-card">
+          <div class="btn-actions">
+            <button class="btn btn-print" onclick="triggerPrint('simple')">🖨️ Print Simple</button>
+            <button class="btn btn-print" onclick="triggerPrint('details')">📄 Print Details</button>
+            <button class="btn btn-excel" onclick="exportToExcel('grnDetailTable', 'GRN_Received_Listing')">📊 Export Excel</button>
+          </div>
+        </div>
+
+        <div class="report-paper">
+          <div class="report-header">
+            <div class="company-name">MASIH JAYA SDN BHD</div>
+            <div class="report-title">GOODS RECEIVED NOTE (GRN) FULFILLMENT LISTING</div>
+          </div>
+          <div class="table-container">
+            <table class="audit-table" id="grnDetailTable">
+              <thead>
+                <tr>
+                  <th style="width: 35px;"></th>
+                  <th>GRN DOC NO.</th>
+                  <th>GRN DATE</th>
+                  <th>REF PO DOC NO.</th>
+                  <th>CREDITOR NAME</th>
+                  <th class="text-right">LINES / GRNs</th>
+                  <th class="text-right">RECEIVED QTY</th>
+                  <th class="text-right">TOTAL GRN VALUE (RM)</th>
+                </tr>
+              </thead>
+              <tbody id="grnDetailTbody">
+                <tr><td colspan="8" class="empty-state">No GRN transactions match your filter criteria.</td></tr>
+              </tbody>
+              <tfoot id="grnDetailTfoot"></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 7: Creditor Balances -->
+      <div id="tab-creditor-bal" class="tab-view">
+        <div class="controls-card" style="justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <label style="font-weight: 700;">SELECT MONTH:</label>
+            <select id="creditorMonthPicker" onchange="renderCreditorBalances()" style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; font-weight: 700;">
+              <option value="ALL">-- ALL MONTHS --</option>
+            </select>
+          </div>
+          <div class="btn-actions">
+            <button class="btn btn-print" onclick="triggerPrint('simple')">🖨️ Print Report</button>
+            <button class="btn btn-excel" onclick="exportToExcel('creditorBalTable', 'Creditor_Balances_Month')">📊 Export Excel</button>
+          </div>
+        </div>
+
+        <div class="report-paper">
+          <div class="report-header">
+            <div class="company-name">MASIH JAYA SDN BHD</div>
+            <div class="report-title">CREDITOR PURCHASE & PO OUTSTANDING BALANCE BY SUPPLIER</div>
+          </div>
+          <div class="table-container">
+            <table class="audit-table" id="creditorBalTable">
+              <thead>
+                <tr>
+                  <th style="width: 35px;"></th>
+                  <th>CREDITOR CODE</th>
+                  <th>CREDITOR NAME</th>
+                  <th class="text-right">TOTAL PO VALUE (RM)</th>
+                  <th class="text-right">RECEIVED VALUE (RM)</th>
+                  <th class="text-right">OUTSTANDING BAL COST (RM)</th>
+                </tr>
+              </thead>
+              <tbody id="creditorBalTbody">
+                <tr><td colspan="6" class="empty-state">No creditor balance records available.</td></tr>
+              </tbody>
+              <tfoot id="creditorBalTfoot"></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+
+<!-- TAB 0: All Locations Summary -->
+<div id="tab-location-summary" class="tab-view">
+  <div class="controls-card" style="justify-content: space-between;">
+    <span class="muted">Every location side by side. Uses the PO / GRN dates and search in the top bar. Click a location name to open its outstanding POs.</span>
+    <div class="btn-actions">
+      <button class="btn btn-print" onclick="triggerPrint('simple')">🖨️ Print Simple</button>
+      <button class="btn btn-print" onclick="triggerPrint('details')">📄 Print by Month</button>
+      <button class="btn btn-excel" onclick="exportToExcel('locSummaryTable', 'All_Locations_Summary')">📊 Export Excel</button>
+    </div>
+  </div>
+  <div class="report-paper">
+    <div class="report-header">
+      <div class="company-name">MASIH JAYA SDN BHD</div>
+      <div class="report-title">PO &amp; GRN SUMMARY BY LOCATION</div>
+    </div>
+    <div class="table-container">
+      <table class="audit-table" id="locSummaryTable">
+        <thead>
+          <tr>
+            <th style="width: 35px;"></th>
+            <th>LOCATION</th>
+            <th class="text-right">POs</th>
+            <th class="text-right">PO VALUE (RM)</th>
+            <th class="text-right">RECEIVED AGAINST PO (RM)</th>
+            <th class="text-right">OUTSTANDING BAL (RM)</th>
+            <th class="text-right">OUTSTANDING</th>
+            <th class="text-right">GRN VALUE (RM)</th>
+            <th class="text-right">FULFILMENT %</th>
+          </tr>
+        </thead>
+        <tbody id="locSummaryTbody"></tbody>
+        <tfoot id="locSummaryTfoot"></tfoot>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Summary PO vs GRN (MJLD template) -->
+<div id="tab-po-grn-summary" class="tab-view">
+  <div class="controls-card sum-controls">
+    <div class="sum-ctl">
+      <label class="auth-check"><input type="radio" name="sumMode" value="month" checked onchange="renderActiveTab()"> <b>Month(s)</b></label>
+      <select id="sumMonth" style="display:none;"></select><span id="sumMonthPick" class="sum-mpick"></span>
+      <label class="auth-check" style="margin-left:10px;"><input type="radio" name="sumMode" value="custom" onchange="renderActiveTab()"> <b>Dates / week</b></label>
+      <input type="date" id="sumFrom" onchange="renderActiveTab()"> <span class="muted">to</span> <input type="date" id="sumTo" onchange="renderActiveTab()">
+    </div>
+    <div class="sum-ctl">
+      <select id="sumLayout" onchange="renderActiveTab()">
+        <option value="company">Whole company (one table)</option>
+        <option value="location">Split by location (one table each)</option>
+      </select>
+      <label class="auth-check" id="sumHideZeroWrap"><input type="checkbox" id="sumHideZero" checked onchange="renderActiveTab()"> Hide creditors with no amounts</label>
+    </div>
+    <div class="btn-actions">
+      <button class="btn btn-print" onclick="triggerPrint('simple')" title="Choose 'Save as PDF' in the print window">🖨️ PDF / Print</button>
+      <button class="btn btn-print" id="sumPdfDetails" onclick="triggerPrint('details')">📄 PDF with PO list</button>
+      <button class="btn btn-excel" onclick="exportSummaryXlsx()">📊 Excel</button>
+      <button class="btn btn-print" onclick="switchNavTab('tab-month-compare')" title="Compare two month-ends">🔀 Compare months</button>
+    </div>
+  </div>
+  <div class="report-paper sum-paper"><div id="sumBody"></div></div>
+</div>
+
+<!-- Month Comparison -->
+<div id="tab-month-compare" class="tab-view">
+  <div class="controls-card" style="justify-content: space-between;">
+    <div class="cmp-pick">
+      <label>COMPARE</label>
+      <select id="cmpMonthA" onchange="onCmpMonthChange('A')"></select>
+      <span class="cmp-vs">vs</span>
+      <select id="cmpMonthB" onchange="onCmpMonthChange('B')"></select>
+    </div>
+    <div class="btn-actions">
+      <button class="btn btn-print" onclick="triggerPrint('simple')">🖨️ Print Simple</button>
+      <button class="btn btn-print" onclick="triggerPrint('details')">📄 Print All Sections</button>
+      <button class="btn btn-excel" onclick="exportToExcel('cmpTable', 'Month_Comparison')">📊 Export Excel</button>
+      <button class="btn btn-print" onclick="switchNavTab('tab-po-grn-summary')">← Back to Summary</button>
+    </div>
+  </div>
+  <div class="report-paper">
+    <div class="report-header">
+      <div class="company-name">MASIH JAYA SDN BHD</div>
+      <div class="report-title">PO OUTSTANDING MONTH COMPARISON — <span class="cmp-a"></span> vs <span class="cmp-b"></span></div>
+    </div>
+    <div class="cmp-stats" id="cmpStats"></div>
+    <div id="cmpBody"></div>
+  </div>
+</div>
+
+<!-- TAB 9: Settings & Locations -->
+<div id="tab-settings" class="tab-view">
+  <div class="report-paper settings-card">
+    <h3>📍 Locations</h3>
+    <p class="muted" style="margin-bottom:10px;">Locations are read automatically from the <b>Location</b> column in your PO and GRN files. Names come from the AutoCount <b>Stock Location Listing</b> — upload it again whenever you add a new location in AutoCount.</p>
+    <div class="loc-add" style="margin:0 0 14px 0;">
+      <span id="locMasterInfo" style="flex:1;"></span>
+      <button class="btn btn-excel" onclick="document.getElementById('locFileInput2').click()">📤 Upload Stock Location Listing</button>
+      <input type="file" id="locFileInput2" accept=".csv,.xlsx,.xls" onchange="handleLocFile(event)" style="display:none;">
+    </div>
+    <div id="locFollowGrn" class="loc-follow"></div>
+    <div id="locationList"></div>
+  </div>
+
+  <div class="report-paper settings-card">
+    <h3>🏷️ Creditor Name Rules</h3>
+    <p class="muted" style="margin-bottom:10px;">Group many shop names under one creditor in every report — e.g. every "Shopee …" shop shows as <b>Shopee</b>. The PO's creditor code is used first; these rules only change how the name is shown and grouped.</p>
+    <div id="credRules"></div>
+  </div>
+
+  <div class="report-paper settings-card cloud-only" id="cloudCard">
+    <h3>☁️ Cloud (GitHub)</h3>
+    <p class="muted" style="margin-bottom:10px;">The data is one locked file on GitHub. Everyone can open the website, but only people with the <b>company password</b> can read it. To <b>save</b>, a PC needs the GitHub key.</p>
+    <div id="cloudInfo"></div>
+  </div>
+
+  <div class="report-paper settings-card folder-only">
+    <h3>📁 Shared Folder (this PC)</h3>
+    <p class="muted" style="margin-bottom:10px;">Where this PC saves the data when you click 💾 Save. Each PC chooses it once.</p>
+    <div id="folderInfo"></div>
+  </div>
+
+  <div class="report-paper settings-card">
+    <h3>👤 Users</h3>
+    <p class="muted" style="margin-bottom:10px;">Everyone logs in so the portal knows who uploaded and saved the data. The user list is kept in the shared folder (portal-users.js).</p>
+    <div id="userAdmin"></div>
+  </div>
+
+  <div class="report-paper settings-card">
+    <h3>🕘 Activity Log</h3>
+    <p class="muted" style="margin-bottom:10px;">Every save to the shared folder: who, when and what was uploaded.</p>
+    <div id="activityLog"></div>
+  </div>
+
+  <div class="report-paper settings-card">
+    <h3>🏢 Companies</h3>
+    <p class="muted" style="margin-bottom:10px;">Each company is detected from the name at the top of the AutoCount CSV, and its data is kept separately in the shared data file. Upload another company's files and they are added here without touching the others.</p>
+    <div id="companyList"></div>
+  </div>
+
+  <div class="report-paper settings-card">
+    <h3>🏷️ Report Heading</h3>
+    <p class="muted" style="margin-bottom:14px;">Name printed at the top of every report for the company you are viewing.</p>
+    <div class="loc-add">
+      <input type="text" id="cfgCompanyName" value="MASIH JAYA SDN BHD">
+      <button class="btn btn-excel" onclick="savePortalSettings()">💾 Save</button>
+      <span id="companySavedMsg" style="color:#15803d;font-weight:700;"></span>
+    </div>
+  </div>
+</div>
+
+    </div>
+  </main>
+
+  <!-- Document Drill-Down Modal Overlay -->
+  <div class="modal-overlay" id="upReviewModal">
+    <div class="modal-card up-review-card">
+      <div class="modal-header">
+        <div class="modal-title" id="upReviewTitle">Review upload</div>
+      </div>
+      <div class="modal-body" id="upReviewBody"></div>
+      <div class="up-review-actions" id="upReviewActions"></div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="docDetailModal" onclick="if(event.target===this)closeDocModal()">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title" id="docModalTitle">🚚 Document Drill-Down</div>
+        <button class="modal-close" onclick="closeDocModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-container">
+          <table class="audit-table">
+            <thead id="modalTableHead"></thead>
+            <tbody id="docModalTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Login -->
+  <div id="authScreen" class="auth-screen"><div class="auth-card" id="authCard"></div></div>
+
+  <script src="portal-config.js?v=1" onerror="void 0"></script>
+  <script src="app.js?v=3.4"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 3.4") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+</body>
+</html>
