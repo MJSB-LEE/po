@@ -6,7 +6,7 @@
 // for location descriptions.
 // ====================================================
 
-const APP_VERSION = 'Version 3.4 · 14/11/2026';
+const APP_VERSION = 'Version 3.5 · 14/11/2026';
 let rawPOList = [];     // one entry per PO line  (has .loc = location code)
 let rawGRNList = [];    // one entry per GRN line (has .loc = location code)
 let dataVersion = 0;    // bumps whenever data changes (for pickers)
@@ -2468,12 +2468,19 @@ async function cloudReadFile() {
     if (!raw.ok) throw new Error('GitHub answered ' + raw.status + ' while downloading the data');
     return { bytes: new Uint8Array(await raw.arrayBuffer()), sha: m.sha };
   }
-  const url = CLOUD.readUrl ? CLOUD.readUrl : (/\.github\.io$/i.test(location.hostname) ? CLOUD.path
-    : `https://raw.githubusercontent.com/${CLOUD.owner}/${CLOUD.repo}/${CLOUD.branch}/${CLOUD.path}`);
-  const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
-  if (r.status === 404) return { bytes: null, sha: '' };
-  if (!r.ok) throw new Error('could not download the data (' + r.status + ')');
-  return { bytes: new Uint8Array(await r.arrayBuffer()), sha: '' };
+  // 1) straight from the repository (fresh within a few minutes)  2) the website copy
+  const urls = CLOUD.readUrl ? [CLOUD.readUrl] : [`https://raw.githubusercontent.com/${CLOUD.owner}/${CLOUD.repo}/${CLOUD.branch}/${CLOUD.path}`]
+    .concat(/\.github\.io$/i.test(location.hostname) ? [CLOUD.path] : []);
+  let lastErr = null, all404 = true;
+  for (const url of urls) {
+    try {
+      const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
+      if (r.ok) return { bytes: new Uint8Array(await r.arrayBuffer()), sha: '' };
+      if (r.status !== 404) { all404 = false; lastErr = new Error('could not download the data (' + r.status + ')'); }
+    } catch (e) { all404 = false; lastErr = e; }
+  }
+  if (all404) return { bytes: null, sha: '' };
+  throw lastErr || new Error('could not download the data');
 }
 // ask for the company password until it opens the file
 function askCloudPassword(bytes, msg) {
@@ -2505,9 +2512,9 @@ function askCloudPassword(bytes, msg) {
 async function cloudLoad() {
   let f;
   try { f = await cloudReadFile(); }
-  catch (e) { alert('Could not load the data from GitHub: ' + e.message + '\nYou can still look at data saved on this PC.'); return null; }
+  catch (e) { window.__cloudError = e.message; return null; }
   cloudFileSha = f.sha;
-  if (!f.bytes) return null;                         // nothing saved yet (first time)
+  if (!f.bytes) { window.__cloudEmpty = true; return null; }   // nothing saved yet (first time)
   let payload = null;
   const k = await storedCloudKey(cloudSaltOf(f.bytes));
   if (k) { try { payload = await cloudDecrypt(f.bytes, k.key); cloudKey = k; } catch (e) { payload = null; } }
@@ -2575,10 +2582,31 @@ async function saveToCloud() {
     if (res.conflict) continue;                     // someone saved at the same moment: read again and combine
     cloudFileSha = res.sha || '';
     afterSharedSave(payload, log, merged);
+    ensureNoJekyll();
     showToast('✓ Saved to the cloud (GitHub). Others see it when they reload — the website can take about 1–2 minutes to update.');
     return;
   }
   alert('Someone else kept saving at the same moment. Please try Save again.');
+}
+async function ensureNoJekyll() {
+  try {
+    if (localStorage.getItem('nojekyll_ok') === CLOUD.owner + '/' + CLOUD.repo) return;
+    const r = await ghFetch('/contents/.nojekyll?ref=' + encodeURIComponent(CLOUD.branch));
+    if (r.status === 404) await ghFetch('/contents/.nojekyll', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'Publish the data folder as-is', content: '', branch: CLOUD.branch }) });
+    localStorage.setItem('nojekyll_ok', CLOUD.owner + '/' + CLOUD.repo);
+  } catch (e) {}
+}
+function showCloudStartScreen() {
+  const scr = document.getElementById('authScreen'), card = document.getElementById('authCard');
+  document.body.classList.add('auth-open'); scr.classList.add('open');
+  const err = window.__cloudError;
+  card.innerHTML = `<div class="auth-brand">📊 AutoCount PO Portal</div>
+    <h2>${err ? '⚠ Could not load the data' : 'No saved data found yet'}</h2>
+    <p class="muted">${err ? 'GitHub did not answer: ' + esc(err) + '.<br>Check the internet connection, then press Reload.'
+      : 'If someone saved data a moment ago, GitHub needs 1–3 minutes. Wait a little, then press Reload.'}</p>
+    <button class="btn btn-excel auth-btn" onclick="location.reload()">🔄 Reload</button>
+    <p class="muted small-text" style="margin-top:16px;">Setting up the portal for the very first time?
+      <a href="#" onclick="showAuth('setup');return false;">Create the first account</a></p>`;
 }
 // Import the shared-folder files (portal-data.js / portal-users.js) into the cloud
 function importFolderFiles(ev) {
@@ -3430,7 +3458,8 @@ function renderUserAdmin() {
       <button class="btn btn-excel" type="submit">＋ Add user</button>
     </form>`;
   else if (me) html += '<p class="muted" style="margin-top:10px;">Only an admin can add or remove users.</p>';
-  if (!usersFromFolder && usersDb.users.length) html += '<p class="note-warn" style="margin-top:10px;">⚠ User list not saved to the shared folder yet. <a href="#" onclick="writeUsers();return false;">Save it now</a></p>';
+  if (cloudMode) { if (pendingLog.some(e => e.part === 'users')) html += '<p class="note-warn" style="margin-top:10px;">⚠ User list not saved to the cloud yet. <a href="#" onclick="saveToShared();return false;">💾 Save to Cloud</a></p>'; }
+  else if (!usersFromFolder && usersDb.users.length) html += '<p class="note-warn" style="margin-top:10px;">⚠ User list not saved to the shared folder yet. <a href="#" onclick="writeUsers();return false;">Save it now</a></p>';
   box.innerHTML = html;
 }
 async function addUser(e) {
@@ -4863,7 +4892,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const vEl = document.getElementById('appVersion');
   if (vEl) vEl.innerText = APP_VERSION;
   renderSyncBar();
-  if (!usersDb.users.length) showAuth('setup');
+  if (!usersDb.users.length) { if (cloudMode && !ghToken() && (window.__cloudEmpty || window.__cloudError)) showCloudStartScreen(); else showAuth('setup'); }
   else if (!restoreSession()) showAuth('login');
   renderUserBox();
   renderActivityLog();
