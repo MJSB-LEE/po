@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=3.5">
+  <link rel="stylesheet" href="styles.css?v=3.7">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -230,7 +230,8 @@
 
 <!-- TAB 5: GRN Received Listing -->
       <div id="tab-grn-details" class="tab-view">
-        <div class="controls-card">
+        <div class="controls-card pout-controls">
+          <div class="sum-ctl"><label><b>GRN month</b></label> <span id="grnPick" class="sum-mpick"></span></div>
           <div class="btn-actions">
             <button class="btn btn-print" onclick="triggerPrint('simple')">🖨️ Print Simple</button>
             <button class="btn btn-print" onclick="triggerPrint('details')">📄 Print Details</button>
@@ -419,7 +420,7 @@
 
   <div class="report-paper settings-card cloud-only" id="cloudCard">
     <h3>☁️ Cloud (GitHub)</h3>
-    <p class="muted" style="margin-bottom:10px;">The data is one locked file on GitHub. Everyone can open the website, but only people with the <b>company password</b> can read it. To <b>save</b>, a PC needs the GitHub key.</p>
+    <p class="muted" style="margin-bottom:10px;">The data is one locked file on GitHub. Everyone can open the website, but only users who log in with their <b>username + password</b> can read it. To <b>save</b>, a PC needs the GitHub key.</p>
     <div id="cloudInfo"></div>
   </div>
 
@@ -492,7 +493,7 @@
   <div id="authScreen" class="auth-screen"><div class="auth-card" id="authCard"></div></div>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=3.5"></script>
-  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 3.5") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+  <script src="app.js?v=3.7"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 3.7") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
