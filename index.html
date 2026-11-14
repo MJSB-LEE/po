@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=3.4">
+  <link rel="stylesheet" href="styles.css?v=3.5">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -431,7 +431,7 @@
 
   <div class="report-paper settings-card">
     <h3>👤 Users</h3>
-    <p class="muted" style="margin-bottom:10px;">Everyone logs in so the portal knows who uploaded and saved the data. The user list is kept in the shared folder (portal-users.js).</p>
+    <p class="muted" style="margin-bottom:10px;">Everyone logs in so the portal knows who uploaded and saved the data. The user list is saved together with the data (shared folder or cloud).</p>
     <div id="userAdmin"></div>
   </div>
 
@@ -492,7 +492,7 @@
   <div id="authScreen" class="auth-screen"><div class="auth-card" id="authCard"></div></div>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=3.4"></script>
-  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 3.4") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+  <script src="app.js?v=3.5"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 3.5") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
