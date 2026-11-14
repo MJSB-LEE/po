@@ -6,7 +6,7 @@
 // for location descriptions.
 // ====================================================
 
-const APP_VERSION = 'Version 3.5 · 14/11/2026';
+const APP_VERSION = 'Version 3.7 · 14/11/2026';
 let rawPOList = [];     // one entry per PO line  (has .loc = location code)
 let rawGRNList = [];    // one entry per GRN line (has .loc = location code)
 let dataVersion = 0;    // bumps whenever data changes (for pickers)
@@ -2013,8 +2013,11 @@ function renderGRNDetails() {
   updateKPIs(getScopedPOLines());
   if (!rawGRNList.some(g => locAllowed(g.loc))) return emptyRow(tbody, tfoot, 8, 'No GRN data loaded for this location. Upload the GRN Detail Listing in "Upload CSV Files".');
 
-  const list = getScopedGRNLines();
-  if (!list.length) return emptyRow(tbody, tfoot, 8, 'No GRN lines match your filters.');
+  const allMonths = [...new Set(rawGRNList.filter(g => locAllowed(g.loc)).map(g => g.grnYYMM).filter(m => m && m !== '0000'))].sort();
+  monthPicks['grnPick:all'] = allMonths;
+  const picked = new Set(renderMonthPicker('grnPick', allMonths, 'toggleMonthPick'));
+  const list = getScopedGRNLines().filter(g => picked.has(g.grnYYMM));
+  if (!list.length) return emptyRow(tbody, tfoot, 8, 'No GRN lines for the chosen month(s) and filters.');
 
   const months = {};
   list.forEach(g => {
@@ -2424,32 +2427,73 @@ async function deriveCloudKey(password, salt) {
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
 }
-// file = "ACP1" + salt(16) + iv(12) + AES-GCM( gzip(JSON) )
-async function cloudEncrypt(obj, k) {
+// File formats
+//   v1 "ACP1" + salt(16) + iv(12) + AES-GCM(gzip JSON)          key = PBKDF2(company password)
+//   v2 "ACP2" + headerLen(4) + header JSON + iv(12) + AES-GCM(gzip JSON)
+//      header.users[hash(username)] = the data key locked with that user's password
+//      header.rec                    = the data key locked with the admin's recovery password
+async function userHashId(username) { return (await sha256Hex('acp-user:' + String(username || '').trim().toLowerCase())).slice(0, 24); }
+function parseCloudFile(bytes) {
+  const tag = new TextDecoder().decode(bytes.subarray(0, 4));
+  if (tag === 'ACP1') return { ver: 1, salt: new Uint8Array(bytes.subarray(4, 20)), iv: bytes.subarray(20, 32), ct: bytes.subarray(32), header: null };
+  if (tag === 'ACP2') {
+    const n = new DataView(bytes.buffer, bytes.byteOffset + 4, 4).getUint32(0, true);
+    const header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + n)));
+    return { ver: 2, header, iv: bytes.subarray(8 + n, 20 + n), ct: bytes.subarray(20 + n) };
+  }
+  throw new Error('not a portal data file');
+}
+async function cloudDecrypt(bytes, key) {
+  const f = parseCloudFile(bytes);
+  const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: f.iv }, key, f.ct));
+  return JSON.parse(new TextDecoder().decode(await streamBytes(plain, new DecompressionStream('gzip'))));
+}
+async function cloudEncrypt(obj, k, header) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const zipped = await streamBytes(new TextEncoder().encode(JSON.stringify(obj)), new CompressionStream('gzip'));
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k.key, zipped));
-  const out = new Uint8Array(4 + 16 + 12 + ct.length);
-  out.set(new TextEncoder().encode('ACP1'), 0); out.set(k.salt, 4); out.set(iv, 20); out.set(ct, 32);
+  const hb = new TextEncoder().encode(JSON.stringify(header || { v: 2, users: {} }));
+  const out = new Uint8Array(8 + hb.length + 12 + ct.length);
+  out.set(new TextEncoder().encode('ACP2'), 0);
+  new DataView(out.buffer).setUint32(4, hb.length, true);
+  out.set(hb, 8); out.set(iv, 8 + hb.length); out.set(ct, 20 + hb.length);
   return out;
 }
-function cloudSaltOf(bytes) { return bytes.subarray(4, 20); }
-async function cloudDecrypt(bytes, key) {
-  if (new TextDecoder().decode(bytes.subarray(0, 4)) !== 'ACP1') throw new Error('not a portal data file');
-  const plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(20, 32) }, key, bytes.subarray(32)));
-  return JSON.parse(new TextDecoder().decode(await streamBytes(plain, new DecompressionStream('gzip'))));
+async function newDataKey() { return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']); }
+async function wrapDataKey(dataKey, password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const pk = await deriveCloudKey(password, salt);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', dataKey));
+  const w = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, pk, raw));
+  return { s: b64.enc(salt), iv: b64.enc(iv), w: b64.enc(w) };
+}
+async function unwrapDataKey(entry, password) {
+  const pk = await deriveCloudKey(password, b64.dec(entry.s));
+  const raw = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64.dec(entry.iv) }, pk, b64.dec(entry.w)));
+  return crypto.subtle.importKey('raw', raw, 'AES-GCM', true, ['encrypt', 'decrypt']);
+}
+async function buildCloudHeader() {
+  const users = {};
+  for (const u of usersDb.users || []) if (u.wrap) users[await userHashId(u.username)] = u.wrap;
+  return { v: 2, users, rec: usersDb.rec || null };
 }
 async function rememberCloudKey(k) {
-  try { const raw = new Uint8Array(await crypto.subtle.exportKey('raw', k.key)); localStorage.setItem(CLOUD_KEY_KEY, JSON.stringify({ salt: b64.enc(k.salt), key: b64.enc(raw) })); } catch (e) {}
+  try { const raw = new Uint8Array(await crypto.subtle.exportKey('raw', k.key)); localStorage.setItem(CLOUD_KEY_KEY, JSON.stringify({ key: b64.enc(raw) })); } catch (e) {}
 }
-async function storedCloudKey(salt) {
+async function storedCloudKey() {
   try {
     const o = JSON.parse(localStorage.getItem(CLOUD_KEY_KEY) || 'null');
-    if (!o || o.salt !== b64.enc(salt)) return null;
-    return { key: await crypto.subtle.importKey('raw', b64.dec(o.key), 'AES-GCM', true, ['encrypt', 'decrypt']), salt: new Uint8Array(salt) };
+    if (!o || !o.key) return null;
+    return { key: await crypto.subtle.importKey('raw', b64.dec(o.key), 'AES-GCM', true, ['encrypt', 'decrypt']) };
   } catch (e) { return null; }
 }
-function ghToken() { try { return localStorage.getItem(GH_TOKEN_KEY) || ''; } catch (e) { return ''; } }
+function canUpload() { return !!(currentUser && (currentUser.admin || currentUser.uploader)); }
+function ghToken() {
+  let t = '';
+  try { t = localStorage.getItem(GH_TOKEN_KEY) || ''; } catch (e) {}
+  if (!t && canUpload() && usersDb && usersDb.ghKey) t = usersDb.ghKey;     // key kept inside the locked data
+  return t;
+}
 const ghApi = p => `https://api.github.com/repos/${encodeURIComponent(CLOUD.owner)}/${encodeURIComponent(CLOUD.repo)}${p}`;
 async function ghFetch(p, opt) {
   const t = ghToken();
@@ -2482,31 +2526,66 @@ async function cloudReadFile() {
   if (all404) return { bytes: null, sha: '' };
   throw lastErr || new Error('could not download the data');
 }
-// ask for the company password until it opens the file
-function askCloudPassword(bytes, msg) {
+// Cloud log-in: username + password open the data. A user who has no personal lock yet
+// (data saved by an older version) types the company/recovery password once.
+function cloudLoginScreen(bytes, msg) {
+  const file = parseCloudFile(bytes);
   return new Promise(resolve => {
     const scr = document.getElementById('authScreen'), card = document.getElementById('authCard');
     document.body.classList.add('auth-open'); scr.classList.add('open');
-    card.innerHTML = `<div class="auth-brand">📊 AutoCount PO Portal</div><h2>🔒 Company password</h2>
-      <p class="muted">The data is locked. Type the company password to open it.</p>
-      <form id="unlockForm"><label>Company password<input type="password" id="unlockPw" required autofocus></label>
-      <label class="auth-check"><input type="checkbox" id="unlockRemember" checked> Remember on this PC</label>
-      <div class="auth-msg" id="unlockMsg">${msg ? esc(msg) : ''}</div>
-      <button class="btn btn-excel" type="submit" style="width:100%;">🔓 Open</button></form>`;
-    document.getElementById('unlockForm').onsubmit = async ev => {
+    let needRec = file.ver === 1;
+    const draw = (m) => {
+      card.innerHTML = `<div class="auth-brand">📊 AutoCount PO Portal</div><h2>Log in</h2>
+        <form id="cloudLoginForm">
+          <label>Username<input id="clUser" required autocomplete="username"></label>
+          <label>Password<input id="clPw" type="password" required autocomplete="current-password"></label>
+          <div id="clRecBox" style="${needRec ? '' : 'display:none'}"><label>Company / recovery password <span class="muted">(needed once)</span><input id="clRec" type="password"></label>
+            <p class="muted small-text">First time with the new login on this account. After this, only your username and password are needed.</p></div>
+          <label class="auth-check"><input type="checkbox" id="clRemember" checked> Remember me on this PC</label>
+          <div class="auth-msg" id="clMsg">${m ? esc(m) : ''}</div>
+          <button class="btn btn-excel auth-btn" type="submit">Log in</button></form>`;
+      document.getElementById('cloudLoginForm').onsubmit = submit;
+    };
+    const submit = async ev => {
       ev.preventDefault();
-      const pw = document.getElementById('unlockPw').value, m = document.getElementById('unlockMsg');
-      m.textContent = 'Opening…';
+      const username = document.getElementById('clUser').value.trim().toLowerCase();
+      const pw = document.getElementById('clPw').value, rec = (document.getElementById('clRec') || {}).value || '';
+      const out = document.getElementById('clMsg');
+      out.textContent = 'Opening…';
       try {
-        const salt = new Uint8Array(cloudSaltOf(bytes));
-        const key = await deriveCloudKey(pw, salt);
-        const payload = await cloudDecrypt(bytes, key);
-        cloudKey = { key, salt };
-        if (document.getElementById('unlockRemember').checked) await rememberCloudKey(cloudKey);
+        let key = null, viaRec = false;
+        const entry = file.ver === 2 && file.header.users ? file.header.users[await userHashId(username)] : null;
+        if (entry) { try { key = await unwrapDataKey(entry, pw); } catch (e) { key = null; } }
+        if (!key) {
+          if (!rec) {
+            if (!entry) { needRec = true; document.getElementById('clRecBox').style.display = ''; out.textContent = 'This account has no personal login yet — type the company / recovery password once.'; return; }
+            out.textContent = '✗ Wrong username or password.'; return;
+          }
+          viaRec = true;
+          if (file.ver === 1) key = await deriveCloudKey(rec, file.salt);
+          else if (file.header.rec) key = await unwrapDataKey(file.header.rec, rec);
+          else { out.textContent = 'No recovery password is set. Ask the admin to reset your password.'; return; }
+        }
+        let payload;
+        try { payload = await cloudDecrypt(bytes, key); } catch (e) { out.textContent = viaRec ? '✗ Wrong company / recovery password.' : '✗ Wrong username or password.'; return; }
+        const users = (payload.users && payload.users.users) || [];
+        const u = users.find(x => x.username === username);
+        if (!u || (await hashPw(u.salt, pw)) !== u.hash) { out.textContent = '✗ Wrong username or password.'; return; }
+        cloudKey = { key };
+        const remember = document.getElementById('clRemember').checked;
+        if (remember) await rememberCloudKey(cloudKey);
+        // give this user a personal lock (and keep the company password as the recovery password)
+        if (viaRec || !u.wrap) {
+          u.wrap = await wrapDataKey(key, pw);
+          if (file.ver === 1 && rec && !payload.users.rec) payload.users.rec = await wrapDataKey(key, rec);
+          window.__cloudLoginUpgrade = `Set up the new login for ${u.name || u.username}`;
+        }
+        window.__cloudLoginUser = { u, remember };
         scr.classList.remove('open'); document.body.classList.remove('auth-open');
         resolve(payload);
-      } catch (e) { m.textContent = '✗ Wrong password.'; }
+      } catch (e) { out.textContent = '✗ ' + e.message; }
     };
+    draw(msg);
   });
 }
 async function cloudLoad() {
@@ -2516,21 +2595,18 @@ async function cloudLoad() {
   cloudFileSha = f.sha;
   if (!f.bytes) { window.__cloudEmpty = true; return null; }   // nothing saved yet (first time)
   let payload = null;
-  const k = await storedCloudKey(cloudSaltOf(f.bytes));
+  const k = await storedCloudKey();
   if (k) { try { payload = await cloudDecrypt(f.bytes, k.key); cloudKey = k; } catch (e) { payload = null; } }
-  if (!payload) payload = await askCloudPassword(f.bytes);
+  if (!payload) payload = await cloudLoginScreen(f.bytes);
   return payload;
 }
-async function newCloudPassword(title) {
-  const p1 = prompt((title || 'Choose the COMPANY PASSWORD that locks the data.') + '\nEveryone who opens the portal needs it. Keep it safe — if it is lost the data cannot be opened.\n\nNew company password (at least 6 characters):');
+async function askRecoveryPassword(title) {
+  const p1 = prompt((title || 'Set the RECOVERY PASSWORD (admin only).') + '\nIt can open the data if everyone forgets their password. Keep it somewhere safe.\n\nRecovery password (at least 6 characters):');
   if (!p1) return null;
   if (p1.length < 6) { alert('Please use at least 6 characters.'); return null; }
-  const p2 = prompt('Type the company password again:');
+  const p2 = prompt('Type the recovery password again:');
   if (p1 !== p2) { alert('The two passwords are different. Nothing changed.'); return null; }
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const k = { key: await deriveCloudKey(p1, salt), salt };
-  await rememberCloudKey(k);
-  return k;
+  return p1;
 }
 async function cloudWrite(bytes, sha, message) {
   const body = { message, content: b64.enc(bytes), branch: CLOUD.branch };
@@ -2545,22 +2621,31 @@ async function cloudWrite(bytes, sha, message) {
 }
 async function saveToCloud() {
   if (!currentUser) return alert('Please log in first.');
+  if (!canUpload() && !(localStorage.getItem(GH_TOKEN_KEY))) return alert('You can view but not save. Ask the admin to tick you as "Uploader" in Settings → Users.');
   if (!ghToken()) {
-    if (confirm('This PC has no GitHub key yet, so it cannot save.\n\nOK = open Settings → Cloud to add the key.')) { switchNavTab('tab-settings'); setTimeout(() => { const c = document.getElementById('cloudCard'); if (c) c.scrollIntoView({ behavior: 'smooth' }); }, 300); }
+    if (confirm('No GitHub key is set yet, so the data cannot be saved.\n\nOK = open Settings → Cloud (the admin adds the key once).')) { switchNavTab('tab-settings'); setTimeout(() => { const c = document.getElementById('cloudCard'); if (c) c.scrollIntoView({ behavior: 'smooth' }); }, 300); }
     return;
   }
   for (let attempt = 0; attempt < 3; attempt++) {
     const f = await cloudReadFile();
     let latest = null;
     if (f.bytes) {
-      if (!cloudKey) { latest = await askCloudPassword(f.bytes, 'Type the company password to save.'); }
-      else {
-        try { latest = await cloudDecrypt(f.bytes, cloudKey.key); }
-        catch (e) { latest = await askCloudPassword(f.bytes, 'The company password was changed by someone. Type the new one.'); }
-      }
+      if (!cloudKey) { alert('Please log in again (reload the page) before saving.'); return; }
+      try { latest = await cloudDecrypt(f.bytes, cloudKey.key); }
+      catch (e) { alert('The data on GitHub was locked with a different key (it was set up again elsewhere). Reload the page and log in.'); return; }
     } else if (!cloudKey) {
-      cloudKey = await newCloudPassword();
-      if (!cloudKey) return;
+      // very first save from a session that has no data key yet
+      const me = (usersDb.users || []).find(x => x.username === currentUser.username);
+      const pw = prompt('Type YOUR login password to lock the data:');
+      if (!pw || !me || (await hashPw(me.salt, pw)) !== me.hash) { alert('Wrong password — nothing saved.'); return; }
+      cloudKey = { key: await newDataKey() };
+      me.wrap = await wrapDataKey(cloudKey.key, pw);
+      await rememberCloudKey(cloudKey);
+    }
+    if (!f.bytes && !usersDb.rec) {
+      const rp = await askRecoveryPassword('Last step: set a RECOVERY PASSWORD (admin only).');
+      if (rp) usersDb.rec = await wrapDataKey(cloudKey.key, rp);
+      else if (!confirm('No recovery password: if the admin forgets the password, the data cannot be opened.\n\nOK = save without it (you can set it later in Settings)')) return;
     }
     let merged = false;
     if (latest && latest.db && (latest.revision || 0) > shared.revision) {
@@ -2569,6 +2654,7 @@ async function saveToCloud() {
       if (!ok) return;
       db = mergeMyChanges(latest.db);
       if (!pendingLog.some(e => e.part === 'users') && latest.users) usersDb = latest.users;
+      else if (latest.users && latest.users.rec && !usersDb.rec) usersDb.rec = latest.users.rec;
       merged = true;
     }
     const now = nowText();
@@ -2577,7 +2663,7 @@ async function saveToCloud() {
     const log = ((latest && latest.log) || activityLog).concat(entries).slice(-1000);
     const payload = { version: 8, revision: Math.max(shared.revision, (latest && latest.revision) || 0) + 1,
       savedAt: now, savedBy: currentUser.username, savedByName: currentUser.name, summary: summarizeEntries(entries), db, log, users: usersDb };
-    const bytes = await cloudEncrypt(payload, cloudKey);
+    const bytes = await cloudEncrypt(payload, cloudKey, await buildCloudHeader());
     const res = await cloudWrite(bytes, f.sha, `Portal data saved by ${currentUser.name}: ${payload.summary}`.slice(0, 200));
     if (res.conflict) continue;                     // someone saved at the same moment: read again and combine
     cloudFileSha = res.sha || '';
@@ -2639,21 +2725,26 @@ function importFolderFiles(ev) {
   });
 }
 async function changeCloudPassword() {
-  if (!currentUser || !currentUser.admin) return alert('Only the admin can change the company password.');
+  if (!currentUser || !currentUser.admin) return alert('Only the admin can set the recovery password.');
   if (!ghToken()) return alert('This PC needs the GitHub key first.');
-  const k = await newCloudPassword('Choose the NEW company password.');
-  if (!k) return;
-  cloudKey = k;
-  pendingLog.push({ action: 'Changed the company password', company: db.current, part: 'meta' });
+  if (!cloudKey) return alert('Please log in again first.');
+  const rp = await askRecoveryPassword(usersDb.rec ? 'Choose the NEW recovery password.' : 'Set the RECOVERY PASSWORD (admin only).');
+  if (!rp) return;
+  usersDb.rec = await wrapDataKey(cloudKey.key, rp);
+  pendingLog.push({ action: 'Changed the recovery password', company: db.current, part: 'users' });
   dirty = true;
   await saveToCloud();
-  alert('Done. Tell everyone the new company password.');
 }
 function setGhToken() {
-  const t = prompt('Paste the GitHub key (fine-grained personal access token) for ' + CLOUD.owner + '/' + CLOUD.repo + ':\n\n(It is kept only on this PC.)');
+  if (!currentUser || !currentUser.admin) return alert('Only the admin can set the GitHub key.');
+  const t = prompt('Paste the GitHub key (fine-grained personal access token) for ' + CLOUD.owner + '/' + CLOUD.repo + ':\n\nIt is kept inside the LOCKED data, so the admin and users ticked as "Uploader" can save from any device after logging in.');
   if (t === null) return;
+  usersDb.ghKey = t.trim() || undefined;
   try { if (t.trim()) localStorage.setItem(GH_TOKEN_KEY, t.trim()); else localStorage.removeItem(GH_TOKEN_KEY); } catch (e) {}
+  pendingLog.push({ action: t.trim() ? 'Set the GitHub key' : 'Removed the GitHub key', company: db.current, part: 'users' });
+  dirty = true; saveStore();
   renderCloudInfo(); renderSyncBar();
+  if (t.trim()) saveToShared();
 }
 function forgetCloudOnPC() {
   if (!confirm('Remove the GitHub key and the remembered company password from THIS PC?')) return;
@@ -2678,10 +2769,14 @@ function renderCloudInfo() {
   const tok = ghToken();
   box.innerHTML = `<table class="audit-table loc-master-table"><tbody>
     <tr><td style="width:220px;"><b>Repository</b></td><td>${esc(CLOUD.owner)}/${esc(CLOUD.repo)} · branch ${esc(CLOUD.branch)} · file <code>${esc(CLOUD.path)}</code></td></tr>
-    <tr><td><b>GitHub key on this PC</b></td><td>${tok ? `✓ set (…${esc(tok.slice(-4))}) — this PC can <b>save</b>` : '— none: this PC can <b>view only</b>'}
-      <button class="btn-small" onclick="setGhToken()">${tok ? 'Change' : 'Add key'}</button> <button class="btn-small" onclick="testCloud()">Test</button> <span id="cloudTest"></span></td></tr>
-    <tr><td><b>Company password</b></td><td>${cloudKey ? '✓ unlocked on this PC' : (cloudFileSha || shared.revision ? '🔒 locked' : 'not set yet — you will choose it at the first Save')}
-      ${currentUser && currentUser.admin && shared.revision ? ' <button class="btn-small" onclick="changeCloudPassword()">Change company password</button>' : ''}</td></tr>
+    <tr><td><b>GitHub key</b></td><td>${usersDb.ghKey ? `✓ saved in the locked data (…${esc(usersDb.ghKey.slice(-4))}) — the admin and <b>Uploader</b> users can save from any device` : (tok ? `✓ on this PC only (…${esc(tok.slice(-4))})` : '— not set: nobody can save yet')}
+      <div class="muted small-text">You: ${canUpload() ? '<b>can save</b> ✓' : '<b>view only</b> (ask the admin to tick you as Uploader)'}</div>
+      ${currentUser && currentUser.admin ? `<button class="btn-small" onclick="setGhToken()">${usersDb.ghKey || tok ? 'Change key' : 'Add key'}</button>` : ''} <button class="btn-small" onclick="testCloud()">Test</button> <span id="cloudTest"></span></td></tr>
+    <tr><td><b>Login</b></td><td>Each user's own <b>username + password</b> opens the data${cloudKey ? ' · ✓ open on this PC' : ''}.
+      Users without the new login yet: ${(usersDb.users || []).filter(u => !u.wrap).map(u => esc(u.name || u.username)).join(', ') || 'none ✓'}
+      ${(usersDb.users || []).some(u => !u.wrap) ? '<div class="muted small-text">They log in once with the company / recovery password, or the admin resets their password.</div>' : ''}</td></tr>
+    <tr><td><b>Recovery password</b></td><td>${usersDb.rec ? '✓ set' : '⚠ not set'} <span class="muted small-text">(opens the data if everyone forgets their password)</span>
+      ${currentUser && currentUser.admin ? ` <button class="btn-small" onclick="changeCloudPassword()">${usersDb.rec ? 'Change' : 'Set'} recovery password</button>` : ''}</td></tr>
     <tr><td><b>Move data from the shared folder</b></td><td>Choose <code>portal-data.js</code> and <code>portal-users.js</code> from the old shared folder, then click 💾 Save to Cloud.
       <label class="btn-small" style="display:inline-block;">📂 Choose files<input type="file" multiple accept=".js" style="display:none" onchange="importFolderFiles(event)"></label></td></tr>
     <tr><td><b>This PC</b></td><td><button class="btn-small" onclick="forgetCloudOnPC()">Forget key + password on this PC</button></td></tr>
@@ -2729,6 +2824,10 @@ async function loadAllData() {
       try { const u = JSON.parse(localStorage.getItem('autocount_portal_users_draft') || 'null'); if (u && u.users) usersDb = u; } catch (e) {}
     }
   } else sharedDb = await loadSharedFiles();
+  if (cloudMode && window.__cloudLoginUser) {
+    const { u, remember } = window.__cloudLoginUser;
+    setCurrentUser(u, remember);
+  }
   let draft = null;
   try { draft = await idbGet(DRAFT_KEY); } catch (e) {}
 
@@ -2759,6 +2858,10 @@ async function loadAllData() {
   Object.values(db.companies).forEach(fixCompany);
   if (!db.companies[db.current]) db.current = Object.keys(db.companies)[0] || '';
   store = db.companies[db.current] || emptyCompany();
+  if (cloudMode && window.__cloudLoginUpgrade) {        // personal login created: save it with the next Save
+    pendingLog.push({ action: window.__cloudLoginUpgrade, company: db.current, part: 'users' });
+    dirty = true;
+  }
 }
 
 // ---------- local draft (unsaved work survives a refresh) ----------
@@ -3216,7 +3319,7 @@ function renderSyncBar() {
     <div class="sync-actions">
       <button class="btn btn-settings btn-sm" onclick="reloadLatest()" title="Load the newest data saved by anyone">🔄 Reload latest</button>
       ${dirty ? '<button class="btn btn-sm btn-ghost" onclick="discardDraft()">Discard</button>' : ''}
-      <button class="btn btn-excel ${dirty ? 'pulse' : ''}" onclick="saveToShared()">${cloudMode ? (ghToken() ? '💾 Save to Cloud' : '💾 Save (needs GitHub key)') : '💾 Save to Shared Folder'}</button>
+      <button class="btn btn-excel ${dirty ? 'pulse' : ''}" onclick="saveToShared()">${cloudMode ? (ghToken() ? '💾 Save to Cloud' : (currentUser && !canUpload() ? '👁 View only' : '💾 Save (needs GitHub key)')) : '💾 Save to Shared Folder'}</button>
       ${dirty && !serverMode && !cloudMode ? '<button class="btn btn-sm btn-ghost" onclick="manualSave()" title="Use this if Save does not work on this PC">⬇ Can\'t save? Download file</button>' : ''}
     </div>`;
 }
@@ -3356,6 +3459,7 @@ async function authSetup(e) {
   const salt = newSalt();
   const user = { username, name: name || username, salt, hash: await hashPw(salt, pw), admin: true, createdAt: nowText() };
   usersDb = { users: [user], updatedAt: nowText() };
+  if (cloudMode) { cloudKey = { key: await newDataKey() }; user.wrap = await wrapDataKey(cloudKey.key, pw); await rememberCloudKey(cloudKey); }
   setCurrentUser(user, true);
   const ok = await writeUsers();
   if (!ok) showToast('Account created on this PC. Click "💾 Save to Shared Folder" later to share the user list.');
@@ -3368,7 +3472,7 @@ async function authLogin(e) {
   setCurrentUser(u, document.getElementById('auRemember').checked);
 }
 function setCurrentUser(u, remember) {
-  currentUser = { username: u.username, name: u.name, admin: !!u.admin };
+  currentUser = { username: u.username, name: u.name, admin: !!u.admin, uploader: !!u.uploader };
   try {
     sessionStorage.setItem(SESSION_KEY, u.username);
     if (remember) localStorage.setItem(SESSION_KEY, u.username); else localStorage.removeItem(SESSION_KEY);
@@ -3380,7 +3484,7 @@ function restoreSession() {
   let name = null;
   try { name = sessionStorage.getItem(SESSION_KEY) || localStorage.getItem(SESSION_KEY); } catch (e) {}
   const u = name && findUser(name);
-  if (u) { currentUser = { username: u.username, name: u.name, admin: !!u.admin }; return true; }
+  if (u) { currentUser = { username: u.username, name: u.name, admin: !!u.admin, uploader: !!u.uploader }; return true; }
   return false;
 }
 function logout() {
@@ -3444,9 +3548,9 @@ function renderUserAdmin() {
       <span style="flex:1;">Logged in as <b>${esc(me.name)}</b> (${esc(me.username)})</span>
       <button class="btn btn-settings btn-sm" onclick="changeMyPassword()">🔑 Change my password</button></div>`;
   html += `<table class="audit-table loc-master-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead><tbody>` +
-    usersDb.users.map(u => `<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : 'User'}</td><td class="muted">${esc(u.createdAt || '')}</td>
+    usersDb.users.map(u => `<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : u.uploader ? 'Uploader' : 'Viewer'}</td><td class="muted">${esc(u.createdAt || '')}</td>
       <td class="text-right">${me && me.admin ? `<button class="btn btn-settings btn-sm" onclick="resetUserPassword('${esc(u.username)}')">Reset password</button>
-        ${u.username !== me.username ? `<button class="btn btn-settings btn-sm" onclick="toggleAdmin('${esc(u.username)}')">${u.admin ? 'Remove admin' : 'Make admin'}</button>
+        ${u.username !== me.username ? `${u.admin ? '' : `<label class="auth-check" style="display:inline-flex;margin-right:6px;" title="Can upload and save"><input type="checkbox" ${u.uploader ? 'checked' : ''} onchange="toggleUploader('${esc(u.username)}')"> Uploader</label>`}<button class="btn btn-settings btn-sm" onclick="toggleAdmin('${esc(u.username)}')">${u.admin ? 'Remove admin' : 'Make admin'}</button>
         <button class="btn btn-danger btn-sm" onclick="deleteUser('${esc(u.username)}')">Delete</button>` : ''}` : ''}</td></tr>`).join('') +
     '</tbody></table>';
   if (me && me.admin) html += `
@@ -3470,9 +3574,10 @@ async function addUser(e) {
   const admin = document.getElementById('nuAdmin').checked;
   if (!/^[a-z0-9._-]{2,30}$/.test(username)) return alert('Username: 2–30 letters/numbers, no spaces.');
   const salt = newSalt(), hash = await hashPw(salt, pw);
+  const wrap = cloudMode && cloudKey ? await wrapDataKey(cloudKey.key, pw) : undefined;
   const ok = await writeUsers(d => {
     if (d.users.some(u => u.username === username)) { alert('That username already exists.'); return false; }
-    d.users.push({ username, name, salt, hash, admin, createdAt: nowText(), createdBy: currentUser.username });
+    d.users.push(Object.assign({ username, name, salt, hash, admin, createdAt: nowText(), createdBy: currentUser.username }, wrap ? { wrap } : {}));
   });
   if (ok !== false) showToast(`User "${name}" added. Tell them their username and password.`);
 }
@@ -3481,7 +3586,8 @@ async function resetUserPassword(username) {
   if (!pw) return;
   if (pw.length < 4) return alert('Password must be at least 4 characters.');
   const salt = newSalt(), hash = await hashPw(salt, pw);
-  const ok = await writeUsers(d => { const u = d.users.find(x => x.username === username); if (!u) return false; u.salt = salt; u.hash = hash; });
+  const wrap = cloudMode && cloudKey ? await wrapDataKey(cloudKey.key, pw) : undefined;
+  const ok = await writeUsers(d => { const u = d.users.find(x => x.username === username); if (!u) return false; u.salt = salt; u.hash = hash; if (wrap) u.wrap = wrap; });
   if (ok) showToast('Password changed.');
 }
 async function changeMyPassword() {
@@ -3492,8 +3598,12 @@ async function changeMyPassword() {
   const pw = prompt('New password (at least 4 characters):');
   if (!pw || pw.length < 4) return;
   const salt = newSalt(), hash = await hashPw(salt, pw);
-  const ok = await writeUsers(d => { const x = d.users.find(v => v.username === currentUser.username); if (!x) return false; x.salt = salt; x.hash = hash; });
+  const wrap = cloudMode && cloudKey ? await wrapDataKey(cloudKey.key, pw) : undefined;
+  const ok = await writeUsers(d => { const x = d.users.find(v => v.username === currentUser.username); if (!x) return false; x.salt = salt; x.hash = hash; if (wrap) x.wrap = wrap; });
   if (ok) showToast('Your password was changed.');
+}
+async function toggleUploader(username) {
+  await writeUsers(d => { const u = d.users.find(x => x.username === username); if (!u) return false; u.uploader = !u.uploader; });
 }
 async function toggleAdmin(username) {
   await writeUsers(d => { const u = d.users.find(x => x.username === username); if (!u) return false; u.admin = !u.admin; });
