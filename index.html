@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=3.7">
+  <link rel="stylesheet" href="styles.css?v=4.0">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -44,6 +44,9 @@
       <li class="menu-group" data-group="grn" onclick="toggleMenuGroup('grn')"><span class="caret">▾</span><span>🚚</span> GRN</li>
       <li class="menu-item child" data-parent="grn" data-tab="tab-grn-details" onclick="switchNavTab('tab-grn-details', this)">
         GRN Received Listing
+      </li>
+      <li class="menu-item child" data-parent="grn" data-tab="tab-price-check" onclick="switchNavTab('tab-price-check', this)">
+        Price Check (PO vs GRN)
       </li>
 
       <li class="menu-item menu-bottom" data-tab="tab-upload" onclick="switchNavTab('tab-upload', this)">
@@ -229,6 +232,32 @@
 </div>
 
 <!-- TAB 5: GRN Received Listing -->
+      <div id="tab-price-check" class="tab-view">
+        <div class="controls-card pout-controls">
+          <div class="sum-ctl">
+            <label><b>GRN month</b></label> <span id="pcPick" class="sum-mpick"></span>
+            <label style="margin-left:10px;"><b>Show by</b></label>
+            <select id="pcGroup" onchange="renderActiveTab()"><option value="cred">Creditor</option><option value="item">Item</option><option value="po">PO</option></select>
+            <label style="margin-left:10px;"><b>Ignore below RM</b></label>
+            <input id="pcMin" type="number" step="0.01" min="0" value="0.01" style="width:80px;" onchange="renderActiveTab()">
+            <button class="btn-small" onclick="poOpenAll('tab-price-check', true)">Open all</button>
+            <button class="btn-small" onclick="poOpenAll('tab-price-check', false)">Close all</button>
+          </div>
+          <div class="btn-actions">
+            <button class="btn btn-print" onclick="printFolders('tab-price-check', false)">🖨️ PDF / Print</button>
+            <button class="btn btn-print" onclick="printFolders('tab-price-check', true)">📄 PDF with details</button>
+            <button class="btn btn-excel" onclick="exportToExcel('pcTable', 'Price_Check_PO_vs_GRN')">📊 Excel</button>
+          </div>
+        </div>
+        <div class="report-paper">
+          <div class="report-header">
+            <div class="company-name">MASIH JAYA SDN BHD</div>
+            <div class="report-title">PRICE CHECK — GRN AMOUNT vs PO PRICE</div>
+          </div>
+          <div id="pcBody"></div>
+        </div>
+      </div>
+
       <div id="tab-grn-details" class="tab-view">
         <div class="controls-card pout-controls">
           <div class="sum-ctl"><label><b>GRN month</b></label> <span id="grnPick" class="sum-mpick"></span></div>
@@ -493,7 +522,7 @@
   <div id="authScreen" class="auth-screen"><div class="auth-card" id="authCard"></div></div>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=3.7"></script>
-  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 3.7") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+  <script src="app.js?v=4.0"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 4.0") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
