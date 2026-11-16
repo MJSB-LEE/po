@@ -6,7 +6,7 @@
 // for location descriptions.
 // ====================================================
 
-const APP_VERSION = 'Version 4.0 · 16/11/2026';
+const APP_VERSION = 'Version 4.3 · 16/11/2026';
 let rawPOList = [];     // one entry per PO line  (has .loc = location code)
 let rawGRNList = [];    // one entry per GRN line (has .loc = location code)
 let dataVersion = 0;    // bumps whenever data changes (for pickers)
@@ -315,8 +315,8 @@ function movedPOTable() {
   if (!mv.length) return missingPONote();
   return missingPONote() + `<details class="moved-po"${mv.length <= 15 ? ' open' : ''}><summary>PO received at another location (${new Set(mv.map(x => x.p.docNo)).size} PO, ${mv.length} line${mv.length > 1 ? 's' : ''}) — click to show</summary>
     <div class="moved-scroll"><table class="audit-table cmp-table"><thead><tr><th>PO No.</th><th>PO Date</th><th>Creditor</th><th>Item</th><th>PO location</th><th></th><th>GRN location</th><th class="text-right">Qty received</th><th class="text-right">GRN value (RM)</th></tr></thead><tbody>` +
-    mv.map(({ p, l, q }) => `<tr><td>${poLink(p.docNo)}</td><td>${esc(p.docDate)}</td><td>${esc(p.creditorName)}${p.creditorCode ? ` <span class="muted">${esc(p.creditorCode)}</span>` : ''}</td>
-      <td>${esc(p.itemCode)} ${esc(p.description)}</td><td><b>${esc(p.loc || 'No location')}</b><div class="muted small-text">${esc(locDesc(p.loc) || '')}</div></td><td>→</td>
+    mv.map(({ p, l, q }) => `<tr><td>${poLink(p.docNo)}</td><td>${esc(p.docDate)}</td><td><span class="wrap">${esc(p.creditorName)}</span>${p.creditorCode ? ` <span class="muted">${esc(p.creditorCode)}</span>` : ''}</td>
+      <td>${esc(p.itemCode)} <span class="wrap">${esc(p.description)}</span></td><td><b>${esc(p.loc || 'No location')}</b><div class="muted small-text">${esc(locDesc(p.loc) || '')}</div></td><td>→</td>
       <td><b>${esc(l)}</b><div class="muted small-text">${esc(locDesc(l) || '')}</div></td><td class="text-right">${qtyFmt(q)}<div class="muted small-text">of ${qtyFmt(p.qty)}</div></td><td class="text-right">${fmt(Math.min(q, p.qty) * p.unitCost)}</td></tr>`).join('') + '</tbody></table></div></details>';
 }
 
@@ -1012,6 +1012,32 @@ function parsePOByCreditor(rows) {
   return out;
 }
 
+// --- Cancelled Purchase Order Detail Listing ---
+//   [PO no] [item] [desc] [RM] [unit price] [qty] [sub total] [location] [cancel date] [cancel doc XPO..]
+function parseCancelPOCSV(rows) {
+  const out = [];
+  let credCode = '', credName = '';
+  rows.forEach(r => {
+    const c0 = cell(r, 0);
+    if (c0 === 'Creditor Code') { const v = nonEmptyIdx(r, 1, r.length); credCode = v.length ? cell(r, v[0]) : ''; credName = v.length > 1 ? cell(r, v[1]) : ''; return; }
+    if (!isPONo(c0)) return;
+    const cur = findCurrency(r, 1);
+    if (cur < 0) return;
+    const before = nonEmptyIdx(r, 1, r.length).filter(i => i < cur);
+    const after = nonEmptyIdx(r, cur + 1, r.length);
+    const nums = after.filter(i => isNum(cell(r, i)));
+    if (nums.length < 3) return;
+    const [pi, qi, si] = nums;
+    const rest = after.filter(i => i > si).map(i => cell(r, i));
+    const dateStr = rest.find(isDate) || '';
+    const loc = rest.find(x => !isDate(x) && !/^X?PO/i.test(x) && x !== '') || '';
+    const doc = rest.slice().reverse().find(x => !isDate(x) && x !== loc) || '';
+    out.push({ poNo: c0, itemCode: before.length ? cell(r, before[0]) : '', description: before.length > 1 ? cell(r, before[before.length - 1]) : '',
+      unitPrice: num(cell(r, pi)), qty: num(cell(r, qi)), amt: num(cell(r, si)), loc, iso: toISO(dateStr), date: dateStr, doc, creditorCode: credCode, creditorName: credName });
+  });
+  return out;
+}
+
 // --- GRN Detail Listing ---
 // Each GRN line is ONE row or TWO rows:
 //   row A: [GRN date] [GRN no] [item code] ... [location]
@@ -1271,6 +1297,7 @@ function rebuildCombined() {
   // stable key per PO line (used to remember cancelled lines)
   const seen = {};
   rawPOList.forEach(p => { const k = up(p.docNo) + '|' + up(p.itemCode); seen[k] = (seen[k] || 0) + 1; p.ckey = k + '|' + seen[k]; });
+  applyCancelImport();
 
   // PO file without a Location column: take the location from the GRN of that line
   if (rawPOList.length && rawPOList.every(p => !p.loc)) {
@@ -1430,7 +1457,7 @@ function updateUploadSummary() {
   }
   if (store.grn.length && !grnHasLoc) notes.push('<span class="note-warn">The GRN file has <b>no Location column</b>.</span>');
   else if (grnNoLoc) notes.push(`<span class="muted">${grnNoLoc} GRN line(s) have no location.</span>`);
-  if (!nLoc) notes.push('<span class="note-warn">Upload the <b>Stock Location Listing</b> (box 3) to show location names instead of codes.</span>');
+  if (!nLoc) notes.push('<span class="note-warn">Upload the <b>Stock Location Listing</b> (drop it in the box above) to show location names instead of codes.</span>');
   if (unknownLocs.length) notes.push(`<span class="note-warn">No name yet for location code(s): ${esc(unknownLocs.join(', '))}. Upload the Stock Location Listing (box 3) to show their names.</span>`);
   if (store.po.length && oldGRN.length) notes.push(`<span class="muted">${oldGRN.length} GRN line(s) are for POs not in the PO file (older POs or a shorter PO date range). They show in GRN Listing but don't affect PO outstanding.</span>`);
   if (direct) notes.push(`<span class="muted">${direct} GRN line(s) are direct GRNs (not from a PO).</span>`);
@@ -1489,8 +1516,9 @@ function recalculateTransfers() {
     p.cancelled = null; p.cancelQty = 0;
     const c = cancelOf(p);
     if (c && c.date <= gr.end) {
-      p.cancelled = c; p.cancelQty = p.balQty;
-      p.balQty = 0; p.balCost = 0;
+      p.cancelled = c; p.cancelQty = c.qty ? Math.min(c.qty, p.balQty) : p.balQty;
+      p.balQty = Math.max(0, p.balQty - p.cancelQty); if (p.balQty < EPS) p.balQty = 0;
+      p.balCost = p.balQty * p.unitCost;
     }
   });
 }
@@ -1620,7 +1648,7 @@ function openPODrillDown(poNo) {
     lines.forEach(p => {
       const canTick = p.balQty > EPS || p.cancelled || cancelOf(p);
       const cx = cancelOf(p);
-      html += `<tr class="${cx ? 'line-cancelled' : ''}"><td>${canTick ? `<input type="checkbox" class="cx" value="${esc(p.ckey)}">` : ''}</td>${locCell(p.loc, p.locGuess, '')}<td><b>${esc(p.itemCode)}</b>${cx ? `<div class="status-badge untrans" title="${esc((cx.reason || '') + ' — by ' + (cx.byName || cx.by || ''))}">Cancelled ${dateDMY(cx.date)}</div>` : ''}</td><td colspan="2">${esc(p.description)}${cx && cx.reason ? `<div class="muted">Reason: ${esc(cx.reason)} (${esc(cx.byName || cx.by || '')})</div>` : ''}</td>
+      html += `<tr class="${cx ? 'line-cancelled' : ''}"><td>${canTick ? `<input type="checkbox" class="cx" value="${esc(p.ckey)}">` : ''}</td>${locCell(p.loc, p.locGuess, '')}<td><b>${esc(p.itemCode)}</b>${cx ? `<div class="status-badge untrans" title="${esc((cx.reason || '') + ' — by ' + (cx.byName || cx.by || ''))}">Cancelled ${dateDMY(cx.date)}</div>` : ''}</td><td colspan="2"><span class="wrap">${esc(p.description)}</span>${cx && cx.reason ? `<div class="muted">Reason: ${esc(cx.reason)} (${esc(cx.byName || cx.by || '')})</div>` : ''}</td>
         <td class="text-right">${fmt(p.unitCost)}</td><td class="text-right">${qtyFmt(p.qty)}</td>
         <td class="text-right" style="color:var(--accent-green);">${qtyFmt(p.transferredQty)}</td>
         <td class="text-right" style="color:${p.balQty > 0 ? 'var(--accent-orange)' : '#64748b'};font-weight:700;">${qtyFmt(p.balQty)}</td>
@@ -1640,7 +1668,7 @@ function openPODrillDown(poNo) {
     html += `<tr class="modal-head"><td></td>${multi ? '<td>Location</td>' : ''}<td>GRN Date</td><td>GRN No.</td><td>Item Code</td><td>Description</td>
       <td class="text-right">Unit Price</td><td class="text-right">Qty</td><td></td><td class="text-right">Sub Total (RM)</td></tr>`;
     grns.forEach(g => {
-      html += `<tr><td></td>${locCell(g.loc)}<td>${esc(g.grnDate)}</td><td><b>${esc(g.grnNo)}</b></td><td>${esc(g.itemCode)}</td><td>${esc(g.description)}</td>
+      html += `<tr><td></td>${locCell(g.loc)}<td>${esc(g.grnDate)}</td><td><b>${esc(g.grnNo)}</b></td><td>${esc(g.itemCode)}</td><td><span class="wrap">${esc(g.description)}</span></td>
         <td class="text-right">${fmt(g.unitPrice)}</td><td class="text-right" style="font-weight:700;">${qtyFmt(g.qty)}</td><td></td>
         <td class="text-right" style="color:var(--accent-green);font-weight:800;">${fmt(g.subTotal)}</td></tr>`;
     });
@@ -1826,7 +1854,7 @@ function renderSixMonthAudit() {
         'Creditor Name': d.creditorName, Status: statusText(statusMap[d.key]),
         'PO Value': d.totalPOVal, Transferred: d.totalTransVal, 'Outstanding Bal': d.totalBalCost }, d.loc));
       return `<tr>
-        <td>${poLink(d.docNo, d.loc)}${locTag(d.loc)}</td><td>${esc(d.docDate)}</td><td>${esc(d.creditorName)}</td>
+        <td>${poLink(d.docNo, d.loc)}${locTag(d.loc)}</td><td>${esc(d.docDate)}</td><td><span class="wrap">${esc(d.creditorName)}</span></td>
         <td>${statusBadge(statusMap[d.key])}</td>
         <td class="text-right">${rm(d.totalPOVal)}</td>
         <td class="text-right" style="color:var(--accent-green);">${rm(d.totalTransVal)}</td>
@@ -1879,7 +1907,7 @@ function renderMonthSelectAudit() {
 
     html += `<tr>
       <td class="text-center">${arrow(subId)}</td>
-      <td>${poLink(d.docNo, d.loc)}${locTag(d.loc)}</td><td>${esc(d.docDate)}</td><td>${esc(d.creditorName)}</td>
+      <td>${poLink(d.docNo, d.loc)}${locTag(d.loc)}</td><td>${esc(d.docDate)}</td><td><span class="wrap">${esc(d.creditorName)}</span></td>
       <td>${statusBadge(statusMap[d.key])}</td>
       <td class="text-right">${rm(d.totalPOVal)}</td>
       <td class="text-right" style="color:var(--accent-green);">${rm(d.totalTransVal)}</td>
@@ -1904,7 +1932,7 @@ function itemSubRow(subId, colspan, items, detailOut) {
     if (detailOut) detailOut.push(lineExport(p));
     return `<tr>
       <td style="padding-left:20px;color:#64748b;">↳ <b>${esc(p.itemCode)}</b></td>
-      <td>${esc(p.description)}</td>
+      <td><span class="wrap">${esc(p.description)}</span></td>
       <td class="text-right">${fmt(p.unitCost)}</td>
       <td class="text-right">${qtyFmt(p.qty)}</td>
       <td class="text-right" style="color:var(--accent-green);font-weight:700;">${qtyFmt(Math.min(p.transferredQty, p.qty))}</td>
@@ -1987,7 +2015,7 @@ function renderUntransferredPOs() {
         Status: statusText(statusMap[d.key]), 'Outstanding Lines PO Value': d.totalPOVal, 'Received on these lines': d.totalTransVal, 'Outstanding Bal': d.totalBalCost }, d.loc));
       html += `<tr class="po-doc-row">
         <td class="text-center">${arrow(subId)}</td>
-        <td>${poLink(d.docNo, d.loc)}${locTag(d.loc)}</td><td>${esc(d.docDate)}</td><td>${esc(d.creditorName)}</td>
+        <td>${poLink(d.docNo, d.loc)}${locTag(d.loc)}</td><td>${esc(d.docDate)}</td><td><span class="wrap">${esc(d.creditorName)}</span></td>
         <td>${statusBadge(statusMap[d.key])}</td>
         <td class="text-right">${rm(d.totalPOVal)}</td>
         <td class="text-right" style="color:var(--accent-green);">${rm(d.totalTransVal)}</td>
@@ -2056,7 +2084,7 @@ function renderGRNDetails() {
             Description: g.description, 'Unit Price': g.unitPrice, Qty: g.qty, 'Sub Total': g.subTotal,
             'PO in PO file?': g.matched ? 'Yes' : 'No' }, g.loc));
           return `<tr><td style="padding-left:20px;color:#64748b;">↳ <b>${esc(g.itemCode)}</b></td>
-            <td colspan="3">${esc(g.description)}</td>
+            <td colspan="3"><span class="wrap">${esc(g.description)}</span></td>
             <td class="text-right">${fmt(g.unitPrice)}</td><td class="text-right">${qtyFmt(g.qty)}</td>
             <td class="text-right" style="color:var(--accent-green);font-weight:700;">${rm(g.subTotal)}</td></tr>`;
         }).join('');
@@ -2064,7 +2092,7 @@ function renderGRNDetails() {
           <td class="text-center" style="width:40px;">${arrow(docSub)}</td>
           <td><b>${esc(d.grnNo)}</b>${locTag(d.loc)}</td><td>${esc(d.grnDate)}</td>
           <td>${poLink(d.poNo, d.loc)} ${d.poDate ? `<span class="muted">(${esc(d.poDate)})</span>` : ''}${d.poNo && !d.matched ? ' <span class="status-badge partial" title="PO not in uploaded PO file">old PO</span>' : ''}</td>
-          <td>${esc(d.creditorName)}</td>
+          <td><span class="wrap">${esc(d.creditorName)}</span></td>
           <td class="text-right">${qtyFmt(d.qty)}</td>
           <td class="text-right" style="font-weight:800;">${rm(d.amt)}</td></tr>
           <tr id="${docSub}" class="detail-subrow"><td colspan="7" class="detail-subrow-cell">
@@ -2278,7 +2306,7 @@ function renderItemOutstandingByMonth() {
         'Outstanding Lines': c.items.length, 'PO Line Value': c.po, 'Outstanding Bal': c.bal });
       const rows = c.items.map(p => {
         detail.push(lineExport(p));
-        return `<tr><td>${poLink(p.docNo, p.loc)}${locTag(p.loc)}</td><td><b>${esc(p.itemCode)}</b></td><td>${esc(p.description)}</td>
+        return `<tr><td>${poLink(p.docNo, p.loc)}${locTag(p.loc)}</td><td><b>${esc(p.itemCode)}</b></td><td><span class="wrap">${esc(p.description)}</span></td>
           <td class="text-right">${qtyFmt(p.balQty)} / ${qtyFmt(p.qty)}</td>
           <td class="text-right">${fmt(p.unitCost)}</td>
           <td class="text-right">${rm(p.lineSubTotal)}</td>
@@ -2941,6 +2969,12 @@ function mergeMyChanges(latestDb) {
       t.grn = mine.grn; t.meta.grnFile = mine.meta.grnFile; t.meta.grnLoadedAt = mine.meta.grnLoadedAt;
     } else if (e.part === 'loc') {
       t.locMaster = Object.assign({}, mine.locMaster); t.meta.locFile = mine.meta.locFile; t.meta.locLoadedAt = mine.meta.locLoadedAt;
+    } else if (e.part === 'cxfile') {
+      t.cxLines = (mine.cxLines || []).slice(); t.meta.cxFile = mine.meta.cxFile; t.meta.cxLoadedAt = mine.meta.cxLoadedAt;
+    } else if (e.part === 'delrange') {
+      const inR = iso => { const m = iso ? isoToYYMM(iso) : ''; return m && m >= e.from && m <= e.to; };
+      if (e.what !== 'grn') t.po = (t.po || []).filter(p => !inR(p.iso));
+      if (e.what !== 'po') t.grn = (t.grn || []).filter(g => !inR(g.grnIso));
     } else if (e.part === 'clear') {
       t.po = []; t.grn = []; ['poFile', 'poLoadedAt', 'grnFile', 'grnLoadedAt'].forEach(k => delete t.meta[k]);
     } else if (e.part === 'credlist') {
@@ -3865,7 +3899,7 @@ function renderMonthCompare() {
     [`Outstanding end ${monthShort(A)}`]: d.a, 'Received': d.got, [`Outstanding end ${monthShort(B)}`]: d.b,
     'Status': d.b > 0.005 ? 'Partial' : 'Closed', 'Last GRN': dateDMY(d.last), 'Days PO to GRN': d.last ? daysBetween(d.iso, d.last) : '' }, [...d.locs]));
   const recvHtml = recvDocs.map(d => `<tr>
-      <td>${poLink(d.docNo)}${locCell(d)}</td><td>${esc(d.docDate)}</td><td>${esc(d.creditorName)}</td>
+      <td>${poLink(d.docNo)}${locCell(d)}</td><td>${esc(d.docDate)}</td><td><span class="wrap">${esc(d.creditorName)}</span></td>
       <td class="text-right">${rm(d.a)}</td><td class="text-right" style="color:var(--accent-green);font-weight:700;">${rm(d.got)}</td>
       <td>${d.b > 0.005 ? `<span class="status-badge partial">Partial · ${rm(d.b)} left</span>` : '<span class="status-badge done">Closed</span>'}</td>
       <td>${dateDMY(d.last)}</td><td class="text-right">${d.last ? daysBetween(d.iso, d.last) + ' d' : '-'}</td></tr>`).join('');
@@ -3876,7 +3910,7 @@ function renderMonthCompare() {
   const newSheet = newDocs.map(d => withLoc({ 'PO No': d.docNo, 'PO Date': d.docDate, 'Creditor': d.creditorName,
     'PO Value (these lines)': d.val, [`Outstanding end ${monthShort(B)}`]: d.b, 'Days waiting': daysBetween(d.iso, endB) }, [...d.locs]));
   const newHtml = newDocs.map(d => `<tr>
-      <td>${poLink(d.docNo)}${locCell(d)}</td><td>${esc(d.docDate)}</td><td>${esc(d.creditorName)}</td>
+      <td>${poLink(d.docNo)}${locCell(d)}</td><td>${esc(d.docDate)}</td><td><span class="wrap">${esc(d.creditorName)}</span></td>
       <td class="text-right">${rm(d.val)}</td><td class="text-right" style="color:var(--accent-orange);font-weight:800;">${rm(d.b)}</td>
       <td class="text-right">${daysBetween(d.iso, endB)} d</td></tr>`).join('');
 
@@ -3892,7 +3926,7 @@ function renderMonthCompare() {
   const bucketHtml = `<div class="age-grid">${buckets.map((b, i) => `<div class="age-box age-${i}">
       <div class="kpi-label">${AGE_LABELS[i]}</div><div class="age-val">${rm(b.val)}</div><div class="muted">${b.docs.size} POs</div></div>`).join('')}</div>`;
   const oldHtml = oldDocs.map(d => `<tr>
-      <td>${poLink(d.docNo)}${locCell(d)}</td><td>${esc(d.docDate)}</td><td>${esc(d.creditorName)}</td>
+      <td>${poLink(d.docNo)}${locCell(d)}</td><td>${esc(d.docDate)}</td><td><span class="wrap">${esc(d.creditorName)}</span></td>
       <td class="text-right"><span class="age-pill age-${ageBucket(d.age)}">${d.age} d</span></td>
       <td class="text-right">${rm(d.a)}</td><td class="text-right" style="color:var(--accent-orange);font-weight:800;">${rm(d.b)}</td>
       <td>${d.last ? dateDMY(d.last) : '<span class="muted">no GRN yet</span>'}</td></tr>`).join('');
@@ -4105,7 +4139,7 @@ function creditorRowHtml(p, cols) {
   const src = { po: 'from PO file', grn: 'from GRN', item: '≈ guessed from the last supplier of this item', manual: 'set by hand', none: 'unknown — no GRN yet' }[p.credSource] || '';
   const o = (store.poCreditors || {})[up(p.docNo)];
   return `<tr class="modal-section cred-row"><td colspan="${cols}">
-    <b>Creditor:</b> ${p.creditorCode ? esc(p.creditorCode) + ' · ' : ''}<b>${esc(p.creditorName)}</b>${p.origCreditor ? ` <span class="muted">(was "${esc(p.origCreditor)}" — grouped by a creditor rule)</span>` : ''}
+    <b>Creditor:</b> ${p.creditorCode ? esc(p.creditorCode) + ' · ' : ''}<b><span class="wrap">${esc(p.creditorName)}</span></b>${p.origCreditor ? ` <span class="muted">(was "${esc(p.origCreditor)}" — grouped by a creditor rule)</span>` : ''}
     <span class="muted">(${esc(src)}${o ? ' by ' + esc(o.byName || o.by || '') + ', ' + esc(o.at || '') : ''})</span>
     <span class="cred-edit">
       <input list="credList" id="pcInput" placeholder="Type to find creditor…" style="min-width:260px;">
@@ -4145,12 +4179,32 @@ function setPOCreditor(docNo, reset) {
   showToast('Creditor updated. Click 💾 Save so everyone sees it.');
 }
 
-function cancelOf(p) { const c = store.cancels && store.cancels[p.ckey]; return c && c.date ? c : null; }
+function cancelOf(p) { const c = store.cancels && store.cancels[p.ckey]; return c && c.date ? c : (p.cxImp || null); }
+// Cancelled PO lines from AutoCount's "Cancelled Purchase Order Detail Listing" (store.cxLines)
+function applyCancelImport() {
+  cxUnmatched = [];
+  const list = store.cxLines || [];
+  if (!list.length) return;
+  const idx = {};
+  rawPOList.forEach(p => { (idx[lineKey(p.docNo, p.itemCode)] = idx[lineKey(p.docNo, p.itemCode)] || []).push(p); });
+  const used = {};
+  list.slice().sort((a, b) => (a.iso || '').localeCompare(b.iso || '')).forEach(x => {
+    const L = idx[lineKey(x.poNo, x.itemCode)];
+    if (!L) { cxUnmatched.push(x); return; }
+    const score = p => (up(p.loc) === up(x.loc) ? 4 : 0) + (Math.abs(p.unitCost - x.unitPrice) < 0.005 ? 2 : 0) + (up(p.description) === up(x.description) ? 1 : 0) - (used[p.id] || 0) * 8;
+    const p = L.slice().sort((a, b) => score(b) - score(a) || a.id - b.id)[0];
+    used[p.id] = (used[p.id] || 0) + 1;
+    const prev = p.cxImp;
+    p.cxImp = { date: prev && prev.date > x.iso ? prev.date : (x.iso || p.iso), qty: (prev ? prev.qty : 0) + x.qty, amt: (prev ? prev.amt : 0) + x.amt,
+      doc: prev ? prev.doc + ', ' + x.doc : x.doc, reason: 'AutoCount ' + (prev ? prev.doc + ', ' + x.doc : x.doc), byName: 'AutoCount', fromFile: true };
+  });
+}
+let cxUnmatched = [];
 // value still outstanding at date `cut` (cancelled lines count as 0 from their cancel date)
 function balAt(p, s, cut) {
   if (!p.iso || p.iso > cut) return 0;
   const c = cancelOf(p);
-  if (c && c.date <= cut) return 0;
+  if (c && c.date <= cut) return c.qty ? Math.max(0, p.qty - c.qty - s.got[p.id]) * p.unitCost : 0;
   return Math.max(0, p.qty - s.got[p.id]) * p.unitCost;
 }
 // value that was cancelled (what was still open on the cancel date)
@@ -4158,7 +4212,8 @@ function cancelledValue(p) {
   const c = cancelOf(p);
   if (!c) return 0;
   const s = allocateAsOf(c.date < p.iso ? p.iso : c.date);
-  return Math.max(0, p.qty - s.got[p.id]) * p.unitCost;
+  const open = Math.max(0, p.qty - s.got[p.id]);
+  return (c.qty ? Math.min(c.qty, open) : open) * p.unitCost;
 }
 function todayISO() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 
@@ -4425,7 +4480,7 @@ function renderPoGrnSummary() {
         npList.map(d => `<tr><td><b>${esc(d.grnNo)}</b>${isMultiLocView() && !S.split ? locTag([...d.locs].sort()) : ''}</td><td>${esc(d.grnDate)}</td><td>${d.poNo ? esc(d.poNo) + ' <span class="gk gk-oldpo">not uploaded</span>' : '<span class="gk gk-nopo">No PO</span>'}</td><td>${d.poNo ? 'B/F + GRN' : 'Current PO + GRN'}</td><td class="text-right">${rmCell(d.amt)}</td></tr>`).join('') + '</tbody></table>' : '';
       return `<tr class="sum-row">
           <td class="text-center">${i + 1}</td>
-          <td><span class="arrow-toggle" data-toggle="${id}">▶</span> ${esc(r.name)}${r.moved ? ' <span class="gk gk-mixed no-print" title="Has PO received at another location — open ▶">↪</span>' : ''}</td>
+          <td><span class="arrow-toggle" data-toggle="${id}">▶</span> <span class="wrap">${esc(r.name)}</span>${r.moved ? ' <span class="gk gk-mixed no-print" title="Has PO received at another location — open ▶">↪</span>' : ''}</td>
           <td class="text-center sum-code">${esc(r.code || '')}</td>
           <td class="text-right">${sumAmt(r.bf)}</td><td class="text-right">${sumAmt(r.nw)}</td>
           <td class="text-right">${sumAmt(r.bf + r.nw)}</td><td class="text-right">${sumAmt(r.grn)}</td>
@@ -4465,7 +4520,7 @@ function renderPoGrnSummary() {
   if (S.cancels.length) {
     html += `<div class="sum-block sum-cancels"><div class="sum-sub">Cancelled PO in this period</div>
       <table class="audit-table cmp-table"><thead><tr><th>PO No.</th><th>Creditor</th><th>Item</th><th>Cancel Date</th><th>Reason</th><th>By</th><th class="text-right">Amount (RM)</th></tr></thead><tbody>` +
-      S.cancels.map(({ p, c, cx }) => `<tr><td>${poLink(p.docNo)}${locTag(p.loc)}</td><td>${esc(p.creditorName)}</td><td>${esc(p.itemCode)} ${esc(p.description)}</td>
+      S.cancels.map(({ p, c, cx }) => `<tr><td>${poLink(p.docNo)}${locTag(p.loc)}</td><td><span class="wrap">${esc(p.creditorName)}</span></td><td>${esc(p.itemCode)} <span class="wrap">${esc(p.description)}</span></td>
         <td>${dateDMY(c.date)}</td><td>${esc(c.reason || '')}</td><td>${esc(c.byName || c.by || '')}</td><td class="text-right">${rmCell(cx)}</td></tr>`).join('') +
       '</tbody></table></div>';
   }
@@ -4726,7 +4781,7 @@ function renderPOOutstanding() {
 function outLeafHtml(L, grp, m) {
   const sum = (arr, f) => arr.reduce((a, x) => a + f(x), 0);
   const lineRow = (r, show) => `<tr><td>${show === 'item' ? `${poLink(r.p.docNo, r.p.loc)}${locTag(r.p.loc)}` : `<b>${esc(r.p.itemCode)}</b>`}</td><td>${show === 'item' ? esc(r.p.docDate) : esc(r.p.description)}</td>
-    ${show === 'item' ? `<td>${esc(r.p.creditorName)}</td>` : ''}<td class="text-right">${qtyFmt(r.p.qty)}</td><td class="text-right" style="color:var(--accent-green);">${qtyFmt(r.recvQ)}</td>
+    ${show === 'item' ? `<td><span class="wrap">${esc(r.p.creditorName)}</span></td>` : ''}<td class="text-right">${qtyFmt(r.p.qty)}</td><td class="text-right" style="color:var(--accent-green);">${qtyFmt(r.recvQ)}</td>
     <td class="text-right">${qtyFmt(r.balQ)}</td><td class="text-right" style="color:var(--accent-orange);font-weight:700;">${rm(r.bal)}</td></tr>`;
   const groups = {};
   const keyOf = grp === 'item' ? r => up(r.p.itemCode) : grp === 'cred' ? r => r.p.creditorCode || up(r.p.creditorName) : r => up(r.p.docNo) + '|' + r.p.loc;
@@ -4736,16 +4791,16 @@ function outLeafHtml(L, grp, m) {
     const G = groups[k], f = G[0].p, bal = sum(G, r => r.bal);
     let title, sub;
     if (grp === 'po') {
-      title = `${poLink(f.docNo, f.loc)}${locTag(f.loc)} <span class="muted">${esc(f.docDate)}</span> · ${esc(f.creditorName)} <span class="muted small-text">${G.length} line${G.length > 1 ? 's' : ''}</span>`;
+      title = `${poLink(f.docNo, f.loc)}${locTag(f.loc)} <span class="muted">${esc(f.docDate)}</span> · <span class="wrap">${esc(f.creditorName)}</span> <span class="muted small-text">${G.length} line${G.length > 1 ? 's' : ''}</span>`;
       sub = `<table class="sub-item-table"><thead><tr><th>Item</th><th>Description</th><th class="text-right">PO Qty</th><th class="text-right">Received</th><th class="text-right">Bal Qty</th><th class="text-right">Outstanding (RM)</th></tr></thead><tbody>${G.map(r => lineRow(r, 'po')).join('')}</tbody></table>`;
     } else {
       const pos = new Set(G.map(r => up(r.p.docNo))).size;
-      title = grp === 'item' ? `<b>${esc(f.itemCode)}</b> ${esc(f.description)} <span class="muted small-text">${pos} PO${pos > 1 ? 's' : ''} · bal qty ${qtyFmt(sum(G, r => r.balQ))}</span>`
-        : `<b>${esc(f.creditorName)}</b> <span class="muted">${esc(f.creditorCode || '')}</span> <span class="muted small-text">${pos} PO${pos > 1 ? 's' : ''}</span>`;
+      title = grp === 'item' ? `<b>${esc(f.itemCode)}</b> <span class="wrap">${esc(f.description)}</span> <span class="muted small-text">${pos} PO${pos > 1 ? 's' : ''} · bal qty ${qtyFmt(sum(G, r => r.balQ))}</span>`
+        : `<b><span class="wrap">${esc(f.creditorName)}</span></b> <span class="muted">${esc(f.creditorCode || '')}</span> <span class="muted small-text">${pos} PO${pos > 1 ? 's' : ''}</span>`;
       const show = grp === 'item' ? 'item' : 'cred';
       sub = `<table class="sub-item-table"><thead><tr>${grp === 'item' ? '<th>PO No.</th><th>PO Date</th><th>Creditor</th>' : '<th>Item</th><th>Description</th>'}<th class="text-right">PO Qty</th><th class="text-right">Received</th><th class="text-right">Bal Qty</th><th class="text-right">Outstanding (RM)</th></tr></thead><tbody>${
         (grp === 'cred' ? G.slice().sort((a, b) => a.p.iso.localeCompare(b.p.iso)) : G).map(r => grp === 'cred'
-          ? `<tr><td>${poLink(r.p.docNo, r.p.loc)}${locTag(r.p.loc)} <b>${esc(r.p.itemCode)}</b></td><td>${esc(r.p.description)}</td><td class="text-right">${qtyFmt(r.p.qty)}</td><td class="text-right" style="color:var(--accent-green);">${qtyFmt(r.recvQ)}</td><td class="text-right">${qtyFmt(r.balQ)}</td><td class="text-right" style="color:var(--accent-orange);font-weight:700;">${rm(r.bal)}</td></tr>`
+          ? `<tr><td>${poLink(r.p.docNo, r.p.loc)}${locTag(r.p.loc)} <b>${esc(r.p.itemCode)}</b></td><td><span class="wrap">${esc(r.p.description)}</span></td><td class="text-right">${qtyFmt(r.p.qty)}</td><td class="text-right" style="color:var(--accent-green);">${qtyFmt(r.recvQ)}</td><td class="text-right">${qtyFmt(r.balQ)}</td><td class="text-right" style="color:var(--accent-orange);font-weight:700;">${rm(r.bal)}</td></tr>`
           : lineRow(r, show)).join('')}</tbody></table>`;
     }
     return `<details class="fold fold-doc"><summary><span class="fold-arrow">▶</span><span class="fold-title">${title}</span><span class="fold-stats"><span class="fs-amt out">${rm(bal)}</span></span></summary><div class="fold-body">${sub}</div></details>`;
@@ -4811,8 +4866,10 @@ function doneLeafHtml(L) {
 const readRows = file => new Promise(res => readCSV(file, rows => res(rows)));
 function fileKind(rows, hint) {
   const t = detectReportTitle(rows);
+  if (/Cancelled Purchase Order/i.test(t)) return 'cancel';
   if (/Purchase Order Detail/i.test(t)) return 'po';
   if (/Goods Received Note/i.test(t)) return 'grn';
+  if (/Cancelled Purchase Order/i.test(t)) return 'cancel';
   if (/Stock Location/i.test(t)) return 'loc';
   if (/Creditor Listing/i.test(t)) return 'cred';
   if (hint) return hint;
@@ -4820,7 +4877,7 @@ function fileKind(rows, hint) {
   if (parseAutoCountPOCSV(rows).length) return 'po';
   return '';
 }
-const KIND_LBL = { po: 'PO Detail Listing', grn: 'GRN Detail Listing', loc: 'Stock Location Listing', cred: 'Creditor Listing' };
+const KIND_LBL = { po: 'PO Detail Listing', grn: 'GRN Detail Listing', loc: 'Stock Location Listing', cred: 'Creditor Listing', cancel: 'Cancelled PO Listing' };
 let uploadBusy = false;
 async function uploadFiles(list, hint) {
   const files = [...(list || [])];
@@ -4828,7 +4885,7 @@ async function uploadFiles(list, hint) {
   if (uploadBusy) return alert('Please finish the current upload first.');
   uploadBusy = true;
   // PO before GRN so GRNs can match the new POs; lists first
-  const order = { loc: 0, cred: 1, po: 2, grn: 3, '': 4 };
+  const order = { loc: 0, cred: 1, po: 2, grn: 3, cancel: 4, '': 5 };
   const jobs = [];
   try {
     for (const f of files) {
@@ -4911,9 +4968,10 @@ async function reviewAndApply(j) {
   const coNow = db.current ? companyDisplay(db.current) : '';
   const coWarn = fileCo && db.current && fileCo !== db.current && Object.keys(db.companies).length
     ? `<div class="up-warn">⚠ This file is for <b>${esc(fileCo)}</b>${db.companies[fileCo] ? '' : ' <i>(new company — it will be added)</i>'}, but you are uploading for <b>${esc(coNow)}</b>. If you accept, it is saved under <b>${esc(fileCo)}</b> and the portal switches to that company.</div>` : '';
-  const head = `${kind === 'po' ? '📁' : kind === 'grn' ? '🚚' : kind === 'loc' ? '📍' : '🏢'} ${KIND_LBL[kind]} <span class="muted">· ${esc(file.name)}</span>`;
+  const head = `${kind === 'po' ? '📁' : kind === 'grn' ? '🚚' : kind === 'loc' ? '📍' : kind === 'cancel' ? '✖' : '🏢'} ${KIND_LBL[kind]} <span class="muted">· ${esc(file.name)}</span>`;
   const coLine = `<div class="up-co-line">Company: <b>${esc(target)}</b></div>`;
 
+  if (kind === 'cancel') return reviewCancelFile(j, head, coLine, coWarn, target);
   if (kind === 'loc' || kind === 'cred') {
     const list = kind === 'loc' ? parseStockLocationCSV(rows) : parseCreditorListing(rows);
     const n = Object.keys(list).length;
@@ -4970,6 +5028,45 @@ async function reviewAndApply(j) {
   return true;
 }
 
+
+async function reviewCancelFile(j, head, coLine, coWarn, target) {
+  const { file, rows } = j;
+  const items = parseCancelPOCSV(rows);
+  if (!items.length) { await upMessage(head, '<p>No cancelled PO lines found in this file.</p>'); return false; }
+  const co = db.companies[target] || emptyCompany();
+  const dates = items.map(x => x.iso).filter(Boolean).sort();
+  const from = dates[0], to = dates[dates.length - 1];
+  const saved = (co.cxLines || []);
+  const sig = x => [up(x.doc), up(x.poNo), up(x.itemCode), x.qty, (+x.amt).toFixed(2), x.iso].join('|');
+  const oldIn = saved.filter(x => x.iso && x.iso >= from && x.iso <= to);
+  const so = new Set(oldIn.map(sig)), sn = new Set(items.map(sig));
+  const added = items.filter(x => !so.has(sig(x))), removed = oldIn.filter(x => !sn.has(sig(x)));
+  // which POs are in the uploaded PO data of that company
+  const poDocs = new Set((co.po || []).map(p => up(p.docNo)));
+  const inData = items.filter(x => poDocs.has(up(x.poNo))), notIn = items.filter(x => !poDocs.has(up(x.poNo)));
+  const sum = L => L.reduce((s, x) => s + (+x.amt || 0), 0);
+  const months = {};
+  items.forEach(x => { const m = isoToYYMM(x.iso || '0000-00'); const o = months[m] || (months[m] = { n: 0, a: 0 }); o.n++; o.a += x.amt; });
+  const period = `${dateDMY(from)} – ${dateDMY(to)}`;
+  const same = saved.length && !added.length && !removed.length;
+  const rowsHtml = L => L.slice(0, 200).map(x => `<tr><td>${esc(x.date)}</td><td><b>${esc(x.doc)}</b></td><td>${esc(x.poNo)}</td><td>${esc(x.creditorName || x.creditorCode)}</td><td>${esc(x.itemCode)}</td><td>${esc(x.loc)}</td><td class="text-right">${qtyFmt(x.qty)}</td><td class="text-right">${fmt(x.amt)}</td></tr>`).join('') + (L.length > 200 ? `<tr><td colspan="8" class="muted">… ${L.length - 200} more</td></tr>` : '');
+  const tbl = (L, title, cls) => !L.length ? '' : `<div class="up-sec ${cls}">${title} (${L.length})</div><div class="up-scroll"><table class="audit-table up-dtable"><thead><tr><th>Cancel date</th><th>Cancel doc</th><th>PO No.</th><th>Creditor</th><th>Item</th><th>Location</th><th class="text-right">Qty</th><th class="text-right">Amount</th></tr></thead><tbody>${rowsHtml(L)}</tbody></table></div>`;
+  let html = coLine + coWarn + `<div class="up-period">File period: <b>${period}</b> · ${items.length} cancelled lines · ${new Set(items.map(x => up(x.poNo))).size} POs · ${rm(sum(items))}</div>`;
+  html += `<table class="audit-table up-mtable"><thead><tr><th>Cancel month</th><th class="text-right">Lines</th><th class="text-right">Amount</th></tr></thead><tbody>${Object.keys(months).sort().map(m => `<tr><td>${m === '0000' ? '-' : monApos(m, true)}</td><td class="text-right">${months[m].n}</td><td class="text-right">${rm(months[m].a)}</td></tr>`).join('')}</tbody></table>`;
+  html += `<div class="up-co-line" style="margin-top:8px;">✓ <b>${inData.length}</b> lines (${rm(sum(inData))}) belong to POs in your uploaded PO data — they will be marked <b>Cancelled</b>.`
+    + (notIn.length ? `<br>ℹ ${notIn.length} lines (${rm(sum(notIn))}) are for older POs that are not uploaded (e.g. ${esc([...new Set(notIn.map(x => x.poNo))].slice(0, 4).join(', '))}) — kept, and used if you upload those POs later.` : '') + '</div>';
+  if (same) html += `<div class="up-same">✓ Same as saved — nothing changed for ${period}.</div>`;
+  else if (saved.length) html += tbl(added, '➕ New cancelled lines', 'add') + tbl(removed, '➖ Not in this file (will be removed)', 'del');
+  const v = await upDialog(head, html, same ? [{ label: 'OK — nothing to change', value: 'skip', cls: 'btn-excel' }]
+    : [{ label: `✓ Accept — update ${period}`, value: 'ok', cls: 'btn-excel' }, { label: 'Keep saved data', value: 'skip' }]);
+  if (v !== 'ok') return false;
+  useCompanyFromFile(rows);
+  store.cxLines = (store.cxLines || []).filter(x => !x.iso || x.iso < from || x.iso > to).concat(items);
+  store.meta.cxFile = file.name; store.meta.cxLoadedAt = new Date().toLocaleString('en-GB');
+  logAction(`Uploaded Cancelled PO file "${file.name}" (${items.length} lines, ${rm(sum(items))}, ${period})`, null, 'cxfile');
+  return true;
+}
+
 // --- upload page ---
 function onUploadCompanyPick(sel) { if (sel.value && sel.value !== db.current) switchCompany(sel.value); renderUploadPage(); }
 function uploadGridHtml() {
@@ -5009,6 +5106,7 @@ function renderUploadPage() {
       <div><span>Creditors</span><b>${Object.keys(store.credMaster || {}).length}</b><small>${store.meta.credFile ? 'listing uploaded' : 'listing not uploaded'}</small></div>`;
   }
   const g = document.getElementById('upGrid'); if (g) g.innerHTML = uploadGridHtml();
+  renderDeleteCard();
   const rc = document.getElementById('upRecent');
   if (rc) {
     const isUp = e => /^Uploaded /.test(e.action || '') && (!e.company || e.company === db.current);
@@ -5068,19 +5166,99 @@ function renderPriceCheck() {
   const keys = Object.keys(groups).sort((a, b) => Math.abs(groups[b].reduce((s, r) => s + r.diff, 0)) - Math.abs(groups[a].reduce((s, r) => s + r.diff, 0)));
   html += keys.map(k => {
     const G = groups[k], f = G[0], d = G.reduce((s, r) => s + r.diff, 0);
-    const title = grp === 'item' ? `<b>${esc(f.g.itemCode)}</b> ${esc(f.g.description)}` : grp === 'po' ? `${poLink(f.p.docNo, f.p.loc)} · ${esc(f.p.creditorName)}`
-      : `<b>${esc(f.g.creditorName)}</b> <span class="muted">${esc(f.g.creditorCode || '')}</span>`;
+    const title = grp === 'item' ? `<b>${esc(f.g.itemCode)}</b> <span class="wrap">${esc(f.g.description)}</span>` : grp === 'po' ? `${poLink(f.p.docNo, f.p.loc)} · <span class="wrap">${esc(f.p.creditorName)}</span>`
+      : `<b><span class="wrap">${esc(f.g.creditorName)}</span></b> <span class="muted">${esc(f.g.creditorCode || '')}</span>`;
     return folderHtml('fold-leaf', title, `<span class="fs-n">${G.length} line${G.length > 1 ? 's' : ''}</span><span class="fs-amt">${sign(d)}</span>`, () =>
       `<table class="sub-item-table"><thead><tr><th>GRN No.</th><th>GRN Date</th><th>PO No.</th>${grp === 'cred' ? '<th>Item</th>' : '<th>Creditor</th>'}<th class="text-right">Qty</th>
         <th class="text-right">PO Price</th><th class="text-right">GRN Price</th><th class="text-right">At PO Price</th><th class="text-right">GRN Amount</th><th class="text-right">Difference</th></tr></thead><tbody>` +
       G.slice().sort((a, b) => a.g.grnIso.localeCompare(b.g.grnIso)).map(r => `<tr><td><b>${esc(r.g.grnNo)}</b>${locTag(r.g.loc)}</td><td>${esc(r.g.grnDate)}</td><td>${poLink(r.p.docNo, r.p.loc)}</td>
-        <td>${grp === 'cred' ? `<b>${esc(r.g.itemCode)}</b> ${esc(r.g.description)}` : esc(r.g.creditorName)}</td><td class="text-right">${qtyFmt(r.qty)}</td>
+        <td>${grp === 'cred' ? `<b>${esc(r.g.itemCode)}</b> <span class="wrap">${esc(r.g.description)}</span>` : esc(r.g.creditorName)}</td><td class="text-right">${qtyFmt(r.qty)}</td>
         <td class="text-right">${r.over ? '<span class="gk gk-oldpo" title="Received more than the PO quantity">extra qty</span>' : fmt4(r.poPrice)}</td><td class="text-right">${r.qty > EPS ? fmt4(r.grnPrice) : '-'}</td>
         <td class="text-right">${fmt(r.poVal)}</td><td class="text-right">${fmt(r.amt)}</td><td class="text-right">${sign(r.diff)}</td></tr>`).join('') + '</tbody></table>', true);
   }).join('');
   body.innerHTML = html;
 }
 function fmt4(v) { return (Math.round(v * 10000) / 10000).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
+
+
+// ====================================================
+// DELETE DATA by months / years (one place, admin only)
+// ====================================================
+function delMonthsList() {
+  const ms = new Set();
+  store.po.forEach(p => { if (p.iso) ms.add(isoToYYMM(p.iso)); });
+  store.grn.forEach(g => { if (g.grnIso) ms.add(isoToYYMM(g.grnIso)); });
+  return [...ms].filter(m => m && m !== '0000').sort();
+}
+function delSelection() {
+  const what = (document.getElementById('delWhat') || {}).value || 'both';
+  let a = (document.getElementById('delFrom') || {}).value, b = (document.getElementById('delTo') || {}).value;
+  if (a && b && a > b) [a, b] = [b, a];
+  return { what, from: a, to: b };
+}
+function delPreview() {
+  const box = document.getElementById('delPreview');
+  if (!box) return null;
+  const { what, from, to } = delSelection();
+  if (!from || !to) { box.innerHTML = ''; return null; }
+  const inR = iso => { const m = iso ? isoToYYMM(iso) : ''; return m && m >= from && m <= to; };
+  const po = what !== 'grn' ? store.po.filter(p => inR(p.iso)) : [];
+  const grn = what !== 'po' ? store.grn.filter(g => inR(g.grnIso)) : [];
+  const poDocs = new Set(po.map(p => up(p.docNo)));
+  const orphan = what !== 'grn' ? store.grn.filter(g => !inR(g.grnIso) && g.poNo && poDocs.has(up(g.poNo))).length : 0;
+  const sum = (L, k) => L.reduce((s, x) => s + (+x[k] || 0), 0);
+  box.innerHTML = `<div class="del-prev">Will delete for <b>${esc(companyDisplay(db.current))}</b>, ${monApos(from, true)} – ${monApos(to, true)}:
+    <ul>${what !== 'grn' ? `<li>PO: <b>${po.length.toLocaleString()}</b> lines (${poDocs.size} POs) · ${rm(sum(po, 'lineSubTotal'))}</li>` : ''}
+    ${what !== 'po' ? `<li>GRN: <b>${grn.length.toLocaleString()}</b> lines (${new Set(grn.map(g => up(g.grnNo))).size} GRNs) · ${rm(sum(grn, 'subTotal'))}</li>` : ''}</ul>
+    ${orphan ? `<div class="note-warn">⚠ ${orphan} GRN lines in other months belong to these POs — after deleting they will show as "PO not uploaded" (in B/F).</div>` : ''}</div>`;
+  return { what, from, to, po: po.length, grn: grn.length };
+}
+function delQuickYear(y) {
+  const ms = delMonthsList().filter(m => m.slice(0, 2) === String(y).slice(2));
+  if (!ms.length) return;
+  document.getElementById('delFrom').value = ms[0];
+  document.getElementById('delTo').value = ms[ms.length - 1];
+  delPreview();
+}
+function renderDeleteCard() {
+  const box = document.getElementById('delCard');
+  if (!box) return;
+  const ms = delMonthsList();
+  const isAdmin = currentUser && currentUser.admin;
+  if (!ms.length) { box.innerHTML = '<p class="muted">Nothing saved for this company.</p>'; return; }
+  if (!isAdmin) { box.innerHTML = '<p class="muted">Only the admin can delete data.</p>'; return; }
+  const years = [...new Set(ms.map(m => '20' + m.slice(0, 2)))].sort();
+  const opt = ms.slice().reverse().map(m => `<option value="${m}">${monApos(m, true)}</option>`).join('');
+  const prev = delSelection();
+  box.innerHTML = `<div class="del-row">
+      <label>Delete</label><select id="delWhat" onchange="delPreview()"><option value="both">PO + GRN</option><option value="po">PO only</option><option value="grn">GRN only</option></select>
+      <label>from</label><select id="delFrom" onchange="delPreview()">${opt}</select>
+      <label>to</label><select id="delTo" onchange="delPreview()">${opt}</select>
+      <span class="muted small-text">Whole year:</span> ${years.map(y => `<button class="btn-small" onclick="delQuickYear(${y})">${y}</button>`).join(' ')}
+    </div>
+    <div id="delPreview"></div>
+    <button class="btn btn-danger btn-sm" onclick="deleteRange()">🗑 Delete these months</button>
+    <span class="muted small-text">Other months, locations and creditor lists are kept. GitHub keeps the old version, so it can be restored.</span>`;
+  if (prev.from && ms.includes(prev.from)) { document.getElementById('delWhat').value = prev.what; document.getElementById('delFrom').value = prev.from; document.getElementById('delTo').value = prev.to; }
+  else { document.getElementById('delFrom').value = ms[0]; document.getElementById('delTo').value = ms[0]; }
+  delPreview();
+}
+function deleteRange() {
+  if (!currentUser || !currentUser.admin) return alert('Only the admin can delete data.');
+  const p = delPreview();
+  if (!p || (!p.po && !p.grn)) return alert('Nothing to delete for these months.');
+  const label = `${p.what === 'both' ? 'PO + GRN' : p.what === 'po' ? 'PO' : 'GRN'} ${monApos(p.from, true)} – ${monApos(p.to, true)}`;
+  const t = prompt(`Delete ${label} for ${companyDisplay(db.current)}?\n${p.po ? p.po + ' PO lines ' : ''}${p.grn ? p.grn + ' GRN lines' : ''}\n\nType DELETE to confirm:`);
+  if (!t || t.trim().toUpperCase() !== 'DELETE') return;
+  const inR = iso => { const m = iso ? isoToYYMM(iso) : ''; return m && m >= p.from && m <= p.to; };
+  if (p.what !== 'grn') store.po = store.po.filter(x => !inR(x.iso));
+  if (p.what !== 'po') store.grn = store.grn.filter(x => !inR(x.grnIso));
+  logAction(`Deleted ${label} (${p.po ? p.po + ' PO lines' : ''}${p.po && p.grn ? ', ' : ''}${p.grn ? p.grn + ' GRN lines' : ''})`, null, 'delrange');
+  Object.assign(pendingLog[pendingLog.length - 1], { from: p.from, to: p.to, what: p.what });
+  afterDataChange();
+  renderUploadPage();
+  showToast('Deleted. Click 💾 Save so everyone sees it.');
+}
 
 // ----------------------------------------------------
 // Start up
