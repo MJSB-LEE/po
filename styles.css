@@ -1,5 +1,3 @@
-
-
 :root {
   --primary: #0f172a;
   --primary-accent: #1e3a8a;
@@ -648,7 +646,8 @@ table.audit-table tfoot td {
 
 .modal-section td { background: #f1f5f9; padding: 10px !important; font-size: 0.8rem; }
 .modal-head td { font-weight: 700; font-size: 0.72rem; text-transform: uppercase; color: #475569; background: #f8fafc; }
-.modal-body td { white-space: normal !important; }
+.modal-body td { white-space: nowrap; }
+.modal-body td .wrap, .modal-body td.wrap-cell { white-space: normal; }
 
 .header-date-box label { white-space: nowrap; }
 .sub-amt { font-size: 0.85em; font-weight: 600; }
@@ -1053,3 +1052,16 @@ body.cloud-mode .folder-only { display: none; }
 .pc-kpis small { color: #64748b; font-size: 0.75rem; }
 .pc-up { color: #b91c1c; font-weight: 800; } .pc-dn { color: #15803d; font-weight: 800; }
 @media (max-width: 900px) { .pc-kpis { grid-template-columns: 1fr; } }
+
+/* ---- Keep codes, dates and numbers on one line; only names / descriptions may wrap ---- */
+table.audit-table td, table.sub-item-table td, table.sum-table td, .modal-body table td { white-space: nowrap; }
+table.audit-table td .wrap, table.sub-item-table td .wrap, table.sum-table td .wrap, .modal-body table td .wrap { white-space: normal; }
+table.loc-master-table td, table.up-dtable td, table.up-mtable td, table.cmp-table td,
+.modal-body table tr.modal-section td, .modal-body table td[colspan], table.audit-table td[colspan] { white-space: normal; }
+.doc-link, .loc-tag, .gk { white-space: nowrap; }
+.sub-item-table td .wrap, .modal-body table td .wrap { display: inline-block; min-width: 200px; }
+.del-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.del-row label { font-weight: 700; font-size: 0.85rem; }
+.del-row select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.del-prev { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 8px 12px; margin: 6px 0 10px; font-size: 0.86rem; }
+.del-prev ul { margin: 4px 0 4px 18px; }
