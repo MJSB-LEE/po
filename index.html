@@ -1,12 +1,10 @@
-
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=4.0">
+  <link rel="stylesheet" href="styles.css?v=4.3">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -149,7 +147,7 @@
           <div class="up-drop-sub">PO Detail Listing + GRN Detail Listing · CSV or Excel · several files at once is fine</div>
           <div class="up-drop-types">
             <span>📁 Purchase Order Detail Listing</span><span>🚚 Goods Received Note Detail Listing</span>
-            <span class="opt">📍 Stock Location Listing <i>(once)</i></span><span class="opt">🏢 Creditor Listing <i>(when new creditors)</i></span>
+            <span class="opt">📍 Stock Location Listing <i>(once)</i></span><span class="opt">🏢 Creditor Listing <i>(when new creditors)</i></span><span>✖ Cancelled PO Detail Listing</span>
           </div>
           <input type="file" id="upFiles" multiple accept=".csv,.xlsx,.xls" style="display:none" onclick="event.stopPropagation()" onchange="uploadFiles(this.files);this.value=''">
           <!-- old single inputs (still used by tests / old links) -->
@@ -174,6 +172,10 @@
             <span class="file-status" id="statusPO"></span><span class="file-status" id="statusGRN"></span>
             <span class="file-status" id="statusLoc"></span><span class="file-status" id="statusCred"></span>
           </div>
+        </div>
+        <div class="report-paper upload-summary">
+          <div class="upload-summary-head"><h3>🗑 Delete data (by month / year)</h3></div>
+          <div id="delCard"></div>
         </div>
         <div class="report-paper upload-summary">
           <div class="upload-summary-head"><h3>Recent uploads</h3></div>
@@ -524,7 +526,7 @@
   <div id="authScreen" class="auth-screen"><div class="auth-card" id="authCard"></div></div>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=4.0"></script>
-  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 4.0") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+  <script src="app.js?v=4.3"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 4.3") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
