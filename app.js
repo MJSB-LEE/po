@@ -6,7 +6,7 @@
 // for location descriptions.
 // ====================================================
 
-const APP_VERSION = 'Version 3.7 · 14/11/2026';
+const APP_VERSION = 'Version 4.0 · 16/11/2026';
 let rawPOList = [];     // one entry per PO line  (has .loc = location code)
 let rawGRNList = [];    // one entry per GRN line (has .loc = location code)
 let dataVersion = 0;    // bumps whenever data changes (for pickers)
@@ -364,6 +364,7 @@ const TAB_TITLES = {
   'tab-po-outstanding': 'PO Outstanding',
   'tab-po-completed': 'PO Completed',
   'tab-grn-details': 'GRN Received Listing',
+  'tab-price-check': 'Price Check (PO vs GRN)',
   'tab-creditor-bal': 'Creditor Balances'
 };
 
@@ -406,6 +407,7 @@ const RENDERERS = {
   'tab-po-outstanding': () => renderPOOutstanding(),
   'tab-po-completed': () => renderPOCompleted(),
   'tab-grn-details': () => renderGRNDetails(),
+  'tab-price-check': () => renderPriceCheck(),
   'tab-creditor-bal': () => renderCreditorBalances(),
   'tab-upload': () => { updateUploadSummary(); renderUploadPage(); updateKPIs(getScopedPOLines()); },
   'tab-settings': () => {
@@ -422,6 +424,7 @@ const TAB_TBODY = {
   'tab-po-outstanding': 'poOutBody',
   'tab-po-completed': 'poDoneBody',
   'tab-grn-details': 'grnDetailTbody',
+  'tab-price-check': 'pcBody',
   'tab-creditor-bal': 'creditorBalTbody'
 };
 
@@ -2475,7 +2478,24 @@ async function unwrapDataKey(entry, password) {
 async function buildCloudHeader() {
   const users = {};
   for (const u of usersDb.users || []) if (u.wrap) users[await userHashId(u.username)] = u.wrap;
-  return { v: 2, users, rec: usersDb.rec || null };
+  return { v: 2, users, rec: usersDb.rec || null, legacy: usersDb.legacy || null };
+}
+// The very first saves used a key made from the company password + a salt. Find that salt:
+// in the header, or in the oldest saved version of the file (GitHub keeps every version).
+async function findLegacySalt(header) {
+  if (header && header.legacy) return b64.dec(header.legacy);
+  try {
+    const r = await fetch(`https://api.github.com/repos/${CLOUD.owner}/${CLOUD.repo}/commits?path=${encodeURIComponent(CLOUD.path)}&per_page=100&sha=${encodeURIComponent(CLOUD.branch)}`, { cache: 'no-store' });
+    if (!r.ok) return null;
+    const list = await r.json();
+    for (const c of list.slice().reverse()) {          // oldest first
+      const f = await fetch(`https://raw.githubusercontent.com/${CLOUD.owner}/${CLOUD.repo}/${c.sha}/${CLOUD.path}`, { cache: 'no-store' });
+      if (!f.ok) continue;
+      const b = new Uint8Array(await f.arrayBuffer());
+      if (new TextDecoder().decode(b.subarray(0, 4)) === 'ACP1') return new Uint8Array(b.subarray(4, 20));
+    }
+  } catch (e) {}
+  return null;
 }
 async function rememberCloudKey(k) {
   try { const raw = new Uint8Array(await crypto.subtle.exportKey('raw', k.key)); localStorage.setItem(CLOUD_KEY_KEY, JSON.stringify({ key: b64.enc(raw) })); } catch (e) {}
@@ -2484,7 +2504,7 @@ async function storedCloudKey() {
   try {
     const o = JSON.parse(localStorage.getItem(CLOUD_KEY_KEY) || 'null');
     if (!o || !o.key) return null;
-    return { key: await crypto.subtle.importKey('raw', b64.dec(o.key), 'AES-GCM', true, ['encrypt', 'decrypt']) };
+    return { key: await crypto.subtle.importKey('raw', b64.dec(o.key), 'AES-GCM', true, ['encrypt', 'decrypt']), legacy: o.salt || null };
   } catch (e) { return null; }
 }
 function canUpload() { return !!(currentUser && (currentUser.admin || currentUser.uploader)); }
@@ -2553,7 +2573,7 @@ function cloudLoginScreen(bytes, msg) {
       const out = document.getElementById('clMsg');
       out.textContent = 'Opening…';
       try {
-        let key = null, viaRec = false;
+        let key = null, viaRec = false, legacySalt = null;
         const entry = file.ver === 2 && file.header.users ? file.header.users[await userHashId(username)] : null;
         if (entry) { try { key = await unwrapDataKey(entry, pw); } catch (e) { key = null; } }
         if (!key) {
@@ -2562,12 +2582,18 @@ function cloudLoginScreen(bytes, msg) {
             out.textContent = '✗ Wrong username or password.'; return;
           }
           viaRec = true;
-          if (file.ver === 1) key = await deriveCloudKey(rec, file.salt);
-          else if (file.header.rec) key = await unwrapDataKey(file.header.rec, rec);
-          else { out.textContent = 'No recovery password is set. Ask the admin to reset your password.'; return; }
+          if (file.ver === 1) { key = await deriveCloudKey(rec, file.salt); legacySalt = file.salt; }
+          else if (file.header.rec) { try { key = await unwrapDataKey(file.header.rec, rec); } catch (e) { key = null; } }
+          if (!key && file.ver === 2) {
+            out.textContent = 'Checking the company password…';
+            const salt = await findLegacySalt(file.header);
+            if (salt) { key = await deriveCloudKey(rec, salt); legacySalt = salt; }
+          }
+          if (!key) { out.textContent = '✗ Wrong company / recovery password.'; return; }
         }
         let payload;
         try { payload = await cloudDecrypt(bytes, key); } catch (e) { out.textContent = viaRec ? '✗ Wrong company / recovery password.' : '✗ Wrong username or password.'; return; }
+        if (legacySalt && !payload.users.legacy) payload.users.legacy = b64.enc(legacySalt);
         const users = (payload.users && payload.users.users) || [];
         const u = users.find(x => x.username === username);
         if (!u || (await hashPw(u.salt, pw)) !== u.hash) { out.textContent = '✗ Wrong username or password.'; return; }
@@ -2577,7 +2603,7 @@ function cloudLoginScreen(bytes, msg) {
         // give this user a personal lock (and keep the company password as the recovery password)
         if (viaRec || !u.wrap) {
           u.wrap = await wrapDataKey(key, pw);
-          if (file.ver === 1 && rec && !payload.users.rec) payload.users.rec = await wrapDataKey(key, rec);
+          if (rec && !payload.users.rec) payload.users.rec = await wrapDataKey(key, rec);   // the company password becomes the recovery password
           window.__cloudLoginUpgrade = `Set up the new login for ${u.name || u.username}`;
         }
         window.__cloudLoginUser = { u, remember };
@@ -2596,7 +2622,7 @@ async function cloudLoad() {
   if (!f.bytes) { window.__cloudEmpty = true; return null; }   // nothing saved yet (first time)
   let payload = null;
   const k = await storedCloudKey();
-  if (k) { try { payload = await cloudDecrypt(f.bytes, k.key); cloudKey = k; } catch (e) { payload = null; } }
+  if (k) { try { payload = await cloudDecrypt(f.bytes, k.key); cloudKey = k; if (k.legacy && payload.users && !payload.users.legacy) payload.users.legacy = k.legacy; } catch (e) { payload = null; } }
   if (!payload) payload = await cloudLoginScreen(f.bytes);
   return payload;
 }
@@ -2641,6 +2667,17 @@ async function saveToCloud() {
       cloudKey = { key: await newDataKey() };
       me.wrap = await wrapDataKey(cloudKey.key, pw);
       await rememberCloudKey(cloudKey);
+    }
+    const meU = (usersDb.users || []).find(x => x.username === currentUser.username);
+    if (meU && !meU.wrap) {
+      const pw = prompt('One-time step: type YOUR login password, so it can open the data on other devices:');
+      if (!pw || (await hashPw(meU.salt, pw)) !== meU.hash) { alert('Wrong password — nothing saved.'); return; }
+      meU.wrap = await wrapDataKey(cloudKey.key, pw);
+    }
+    if (f.bytes && !usersDb.rec && currentUser.admin && !window.__recAsked) {
+      window.__recAsked = true;
+      const rp = await askRecoveryPassword('Please set a RECOVERY PASSWORD (admin only) — you can use your old company password.');
+      if (rp) usersDb.rec = await wrapDataKey(cloudKey.key, rp);
     }
     if (!f.bytes && !usersDb.rec) {
       const rp = await askRecoveryPassword('Last step: set a RECOVERY PASSWORD (admin only).');
@@ -3469,6 +3506,11 @@ async function authLogin(e) {
   const u = findUser(document.getElementById('auUser').value);
   const pw = document.getElementById('auPw').value;
   if (!u || (await hashPw(u.salt, pw)) !== u.hash) return showAuth('login', 'Wrong username or password.');
+  if (cloudMode && cloudKey && !u.wrap) {
+    u.wrap = await wrapDataKey(cloudKey.key, pw);
+    pendingLog.push({ action: `Set up the new login for ${u.name || u.username}`, company: db.current, part: 'users' });
+    dirty = true; saveStore();
+  }
   setCurrentUser(u, document.getElementById('auRemember').checked);
 }
 function setCurrentUser(u, remember) {
@@ -3664,7 +3706,7 @@ function allocateAsOf(cutIso) {
   return (asOfCache[ck] = { got, lastGrn });
 }
 
-// Every GRN quantity given to each PO line, in date order: [iso, loc, qty]
+// Every GRN quantity given to each PO line, in date order: [iso, loc, qty, GRN amount]
 let allocEvCache = { ver: -1, ev: null };
 function allocEvents() {
   if (allocEvCache.ver === dataVersion) return allocEvCache.ev;
@@ -3678,14 +3720,15 @@ function allocEvents() {
     const desc = up(g.description);
     const score = p => (p.loc === g.loc ? 2 : 0) + (up(p.description) === desc ? 1 : 0);
     const ordered = lines.slice().sort((a, b) => score(b) - score(a) || a.id - b.id);
-    const give = (p, q) => { got[p.id] += q; (ev[p.id] = ev[p.id] || []).push([g.grnIso, g.loc, q]); };
+    const give = (p, q, over) => { got[p.id] += q; (ev[p.id] = ev[p.id] || []).push([g.grnIso, g.loc, q, Math.abs(g.qty) > EPS ? g.subTotal * q / g.qty : 0, !!over, g]); };
+    if (!(left > EPS)) { (ev[ordered[0].id] = ev[ordered[0].id] || []).push([g.grnIso, g.loc, 0, g.subTotal, true, g]); return; }   // no qty (or a return): amount only
     for (const p of ordered) {
       if (left <= EPS) break;
       const take = Math.min(p.qty - got[p.id], left);
       if (take <= EPS) continue;
       give(p, take); left -= take;
     }
-    if (left > EPS) give(ordered[0], left);
+    if (left > EPS) give(ordered[0], left, true);
   });
   allocEvCache = { ver: dataVersion, ev };
   return ev;
@@ -4245,7 +4288,7 @@ function computeSummary() {
   const q = getSearchFilter();
   const follow = locFollowsGrn();
   const lines = rawPOList.filter(p => (locAllowed(p.loc) || (follow && p.xfer && Object.keys(p.xfer).some(locAllowed))) && poMatchesSearch(p, q) && p.iso && p.iso <= end);
-  const EV = follow ? allocEvents() : [];
+  const EV = allocEvents();
   const sBF = allocateAsOf(cutBF), sE = allocateAsOf(end);
   const split = (document.getElementById('sumLayout') || {}).value === 'location';
   const hideZero = (document.getElementById('sumHideZero') || {}).checked !== false;
@@ -4258,24 +4301,25 @@ function computeSummary() {
     const cf = balAt(p, sE, end);
     const c = cancelOf(p);
     const cx = c && c.date >= start && c.date <= end ? cancelledValue(p) : 0;
-    const grn = bf + nw - cx - cf;
-    if (Math.abs(bf) < 0.005 && Math.abs(nw) < 0.005 && Math.abs(cf) < 0.005 && Math.abs(cx) < 0.005 && Math.abs(grn) < 0.005) return;
+    const grnPO = bf + nw - cx - cf;                  // PO value used up in the period (at PO price)
+    // GRN = the real GRN amount (same as AutoCount); the gap to the PO price is the price difference
+    const amtByLoc = {}; let grn = 0;
+    (EV[p.id] || []).forEach(([iso, l, qq, amt]) => { if (iso > cutBF && iso <= end) { amtByLoc[l] = (amtByLoc[l] || 0) + amt; grn += amt; } });
+    const pd = grn - grnPO;
+    if (Math.abs(bf) < 0.005 && Math.abs(nw) < 0.005 && Math.abs(cf) < 0.005 && Math.abs(cx) < 0.005 && Math.abs(grn) < 0.005 && Math.abs(pd) < 0.005) return;
     if (cx && locAllowed(p.loc)) cancelsInPeriod.push({ p, c, cx });
     // how this period's GRN splits over the locations that received it
     let shares = null;
-    if (follow && p.xfer && Math.abs(grn) >= 0.005) {
-      const ql = {}; let tq = 0;
-      (EV[p.id] || []).forEach(([iso, l, qq]) => { if (iso > cutBF && iso <= end) { ql[l] = (ql[l] || 0) + qq; tq += qq; } });
-      if (tq > EPS && Object.keys(ql).some(l => l !== p.loc)) { shares = {}; Object.keys(ql).forEach(l => { shares[l] = ql[l] / tq; }); }
-    }
+    if (follow && p.xfer && Object.keys(amtByLoc).some(l => l !== p.loc)) shares = amtByLoc;
     const getBlock = l => { const bk = split ? l : '*'; return blocks[bk] || (blocks[bk] = { loc: bk, creds: {}, po: new Set(), keys: new Set(), tot: { bf: 0, nw: 0, grn: 0, cx: 0, cf: 0, xin: 0, xout: 0 } }); };
     const getRow = b => { const ck = p.creditorCode || up(p.creditorName); return b.creds[ck] || (b.creds[ck] = { code: p.creditorCode, name: p.creditorName, bf: 0, nw: 0, grn: 0, cx: 0, cf: 0, xin: 0, xout: 0, docs: {} }); };
     const getDoc = r => r.docs[up(p.docNo)] || (r.docs[up(p.docNo)] = { docNo: p.docNo, docDate: p.docDate, iso: p.iso, locs: new Set(), bf: 0, nw: 0, grn: 0, cx: 0, cf: 0, xin: 0, xout: 0 });
     let grnHere = grn;
     if (shares) {
       grnHere = 0;
+      if (Object.keys(shares).length === 0) grnHere = grn;
       Object.keys(shares).forEach(l => {
-        const v = grn * shares[l];
+        const v = shares[l];
         // same table as the PO (own location, or whole-company view with both locations ticked)
         if (l === p.loc || (!split && locAllowed(l) && locAllowed(p.loc))) { grnHere += v; return; }
         if (locAllowed(p.loc)) {
@@ -4292,11 +4336,11 @@ function computeSummary() {
     }
     if (!locAllowed(p.loc)) return;
     const b = getBlock(p.loc), r = getRow(b), d = getDoc(r);
-    r.bf += bf; r.nw += nw; r.grn += grnHere; r.cx += cx; r.cf += cf;
-    b.tot.bf += bf; b.tot.nw += nw; b.tot.grn += grnHere; b.tot.cx += cx; b.tot.cf += cf;
+    r.bf += bf; r.nw += nw; r.grn += grnHere; r.cx += cx; r.cf += cf; r.pd = (r.pd || 0) + pd;
+    b.tot.bf += bf; b.tot.nw += nw; b.tot.grn += grnHere; b.tot.cx += cx; b.tot.cf += cf; b.tot.pd = (b.tot.pd || 0) + pd;
     if (nw) b.po.add(up(p.docNo));
     b.keys.add(lineKey(p.docNo, p.itemCode) + (split ? '|' + p.loc : ''));
-    d.locs.add(p.loc); d.bf += bf; d.nw += nw; d.grn += grnHere; d.cx += cx; d.cf += cf;
+    d.locs.add(p.loc); d.bf += bf; d.nw += nw; d.grn += grnHere; d.cx += cx; d.cf += cf; d.pd = (d.pd || 0) + pd;
   });
   // GRN not linked to any uploaded PO line (no PO number, or the PO is not uploaded) — taken straight from the GRN
   rawGRNList.forEach(g => {
@@ -4329,7 +4373,7 @@ function computeSummary() {
     if (b.npDocs) b.npDocs.forEach(x => g.add(x));
     b.grnDocs = g.size;
     b.rows = Object.values(b.creds).sort((a, c) => a.name.localeCompare(c.name));
-    if (hideZero) b.rows = b.rows.filter(r => [r.bf, r.nw, r.grn, r.cx, r.cf, r.np, r.xout].some(v => Math.abs(v) >= 0.005));
+    if (hideZero) b.rows = b.rows.filter(r => [r.bf, r.nw, r.grn, r.cx, r.cf, r.np, r.xout, r.pd || 0].some(v => Math.abs(v) >= 0.005));
   });
   const order = Object.keys(blocks).sort((a, b) => (a === NO_LOC) - (b === NO_LOC) || a.localeCompare(b));
   return (sumCache = { per, cutBF, split, blocks: order.map(k => blocks[k]), cancels: cancelsInPeriod });
@@ -4372,7 +4416,7 @@ function renderPoGrnSummary() {
       const id = `sumSub_${bi}_${i}`;
       const docs = Object.values(r.docs).sort((a, c) => a.iso.localeCompare(c.iso));
       const sub = docs.map(d => `<tr>
-          <td>${poLink(d.docNo)}${isMultiLocView() && !S.split ? locTag([...d.locs].sort()) : ''}${d.fromLoc && d.xin ? ` <span class="gk gk-mixed" title="PO raised at ${esc(d.fromLoc)} — the GRN received here is shown in B/F and GRN">PO at ${esc(d.fromLoc)} · GRN here</span>` : ''}${d.outTo ? ` <span class="gk gk-oldpo" title="GRN of this PO received at other locations (shown in their tables)">↪ ${esc(Object.keys(d.outTo).sort().map(l => `${l}: ${fmt(d.outTo[l])}`).join(', '))}</span>` : ''}</td><td>${esc(d.docDate)}</td>
+          <td>${poLink(d.docNo)}${isMultiLocView() && !S.split ? locTag([...d.locs].sort()) : ''}${d.fromLoc && d.xin ? ` <span class="gk gk-mixed" title="PO raised at ${esc(d.fromLoc)} — the GRN received here is shown in B/F and GRN">PO at ${esc(d.fromLoc)} · GRN here</span>` : ''}${Math.abs(d.pd || 0) >= 0.005 ? ` <span class="gk gk-mixed" title="GRN amount ${(d.pd > 0 ? 'higher' : 'lower')} than the PO price (price or extra quantity)">price diff ${d.pd > 0 ? '+' : '−'}${fmt(Math.abs(d.pd))}</span>` : ''}${d.outTo ? ` <span class="gk gk-oldpo" title="GRN of this PO received at other locations (shown in their tables)">↪ ${esc(Object.keys(d.outTo).sort().map(l => `${l}: ${fmt(d.outTo[l])}`).join(', '))}</span>` : ''}</td><td>${esc(d.docDate)}</td>
           <td class="text-right">${sumAmt(d.bf)}</td><td class="text-right">${sumAmt(d.nw)}</td><td class="text-right">${sumAmt(d.bf + d.nw)}</td>
           <td class="text-right">${sumAmt(d.grn)}</td><td class="text-right">${sumAmt(d.cx)}</td>
           <td class="text-right" style="font-weight:700;${d.cf > 0.005 ? 'color:var(--accent-orange);' : ''}">${sumAmt(d.cf)}</td></tr>`).join('');
@@ -4393,7 +4437,8 @@ function renderPoGrnSummary() {
           <tbody>${sub || '<tr><td colspan="8" class="muted">No PO lines.</td></tr>'}</tbody></table>${npSub}</td></tr>`;
     }).join('');
     const xin = t.xin || 0, xout = t.xout || 0;
-    const check = Math.abs(t.bf + t.nw - t.grn - xout - t.cx - t.cf) < 0.01;
+    const pdT = t.pd || 0;
+    const check = Math.abs(t.bf + t.nw - t.grn - xout + pdT - t.cx - t.cf) < 0.05;
     html += `<div class="sum-block${bi ? ' sum-break' : ''}">
       <div class="sum-title">${esc(per.title)}</div>
       <div class="sum-sub">${esc(sumBlockName(b))}</div>
@@ -4413,7 +4458,7 @@ function renderPoGrnSummary() {
         </thead>
         <tbody>${rows || '<tr><td colspan="9" class="empty-state">No creditors.</td></tr>'}</tbody>
       </table></div>
-      <div class="sum-check ${check ? '' : 'note-warn'}">${check ? '✓' : '⚠'} Check: B/F ${rm(t.bf)} + Current PO ${rm(t.nw)} − GRN ${rm(t.grn)}${xout > 0.005 ? ` − GRN of this location's PO received elsewhere ${rm(xout)}` : ''} − Cancelled ${rm(t.cx)} = C/F ${rm(t.cf)} · ${b.rows.length} creditors${xin > 0.005 ? `<div class="muted small-text">Includes ${rm(xin)} GRN received here for POs raised at other locations — counted in both B/F and GRN.</div>` : ''}</div>
+      <div class="sum-check ${check ? '' : 'note-warn'}">${check ? '✓' : '⚠'} Check: B/F ${rm(t.bf)} + Current PO ${rm(t.nw)} − GRN ${rm(t.grn)}${xout > 0.005 ? ` − GRN of this location's PO received elsewhere ${rm(xout)}` : ''}${Math.abs(pdT) >= 0.005 ? ` ${pdT > 0 ? '+' : '−'} price difference GRN vs PO ${rm(Math.abs(pdT))}` : ''} − Cancelled ${rm(t.cx)} = C/F ${rm(t.cf)} · ${b.rows.length} creditors${xin > 0.005 ? `<div class="muted small-text">Includes ${rm(xin)} GRN received here for POs raised at other locations — counted in both B/F and GRN.</div>` : ''}</div>
     </div>`;
   });
 
@@ -4491,13 +4536,14 @@ function exportSummaryXlsx() {
       sh.cell(rr, H, r2(row.bf + row.nw), st.num, `${C(rr, D)}+${C(rr, Fc)}`);
       sh.cell(rr, J, r2(row.grn), st.num);
       sh.cell(rr, L, r2(row.cx), st.num);
-      const adj = r2(-(row.xout || 0));
+      const adj = r2(-(row.xout || 0) + (row.pd || 0));
       sh.cell(rr, N, r2(row.cf), st.num, `${C(rr, H)}-${C(rr, J)}-${C(rr, L)}` + (Math.abs(adj) >= 0.005 ? (adj > 0 ? '+' : '-') + Math.abs(adj).toFixed(2) : ''));
       const outPOs = Object.values(row.docs).filter(d => d.cf > 0.005).map(d => d.docNo);
       const notes = [];
       if (outPOs.length) notes.push(outPOs.slice(0, 6).join(', ') + (outPOs.length > 6 ? ` (+${outPOs.length - 6} more)` : ''));
       if ((row.xin || 0) > 0.005) notes.push(`B/F & GRN include PO from other location: ${fmt(row.xin)} (${Object.values(row.docs).filter(d => d.xin).map(d => d.docNo + ' @' + d.fromLoc).slice(0, 4).join(', ')})`);
       if ((row.xout || 0) > 0.005) notes.push(`GRN received at other location: ${fmt(row.xout)}`);
+      if (Math.abs(row.pd || 0) >= 0.005) notes.push(`Price difference GRN vs PO: ${row.pd > 0 ? '+' : '-'}${fmt(Math.abs(row.pd))}`);
       if (notes.length) sh.cell(rr, O, notes.join(' · '), st.note);
       sh.height(rr, 45);
       r++;
@@ -4974,6 +5020,67 @@ function renderUploadPage() {
       rows.map(e => `<tr><td>${esc(e.savedAt || e.at || '')}</td><td><b>${esc(e.byName || e.by || '')}</b></td><td>${esc(e.action)}</td></tr>`).join('') + '</tbody></table>';
   }
 }
+
+
+// ====================================================
+// REPORT: Price Check — GRN amount vs PO price (same total as the "price difference" in Summary)
+// ====================================================
+function renderPriceCheck() {
+  const body = document.getElementById('pcBody');
+  if (!body) return;
+  folderRender = {}; folderSeq = 0;
+  updateKPIs(getScopedPOLines());
+  if (!rawGRNList.length) { body.innerHTML = `<div class="empty-state">${noDataMsg()}</div>`; return; }
+  const allMonths = [...new Set(rawGRNList.filter(g => locAllowed(g.loc)).map(g => g.grnYYMM).filter(m => m && m !== '0000'))].sort();
+  monthPicks['pcPick:all'] = allMonths;
+  const picked = new Set(renderMonthPicker('pcPick', allMonths, 'toggleMonthPick'));
+  const grp = (document.getElementById('pcGroup') || {}).value || 'cred';
+  const minAmt = Math.abs(parseFloat((document.getElementById('pcMin') || {}).value) || 0.01);
+  const q = getSearchFilter();
+  const EV = allocEvents();
+  const rows = [];
+  rawPOList.forEach(p => {
+    (EV[p.id] || []).forEach(([iso, l, qq, amt, over, g]) => {
+      if (!g || !picked.has(g.grnYYMM) || !locAllowed(l) || !grnMatchesSearch(g, q)) return;
+      const poVal = over ? 0 : qq * p.unitCost;
+      const diff = amt - poVal;
+      if (Math.abs(diff) < minAmt) return;
+      rows.push({ p, g, qty: qq, amt, poVal, diff, over, poPrice: p.unitCost, grnPrice: qq > EPS ? amt / qq : 0 });
+    });
+  });
+  const tot = rows.reduce((a, r) => a + r.diff, 0), up_ = rows.filter(r => r.diff > 0).reduce((a, r) => a + r.diff, 0), dn = tot - up_;
+  const mLbl = [...picked].sort().map(m => monApos(m)).join(', ');
+  const sign = v => `<span class="${v > 0 ? 'pc-up' : 'pc-dn'}">${v > 0 ? '+' : '−'}${rm(Math.abs(v))}</span>`;
+  let html = `<div class="pc-kpis">
+      <div><span>Price difference (GRN − PO)</span><b>${sign(tot)}</b><small>${mLbl || '-'} · same as the "price difference" in Summary PO vs GRN</small></div>
+      <div><span>GRN higher than PO</span><b class="pc-up">+${rm(up_)}</b><small>${rows.filter(r => r.diff > 0).length} lines — supplier charged more / extra qty</small></div>
+      <div><span>GRN lower than PO</span><b class="pc-dn">−${rm(Math.abs(dn))}</b><small>${rows.filter(r => r.diff < 0).length} lines — cheaper than ordered</small></div>
+    </div>`;
+  const exp = rows.map(r => withLoc({ 'GRN Month': monApos(r.g.grnYYMM, true), 'GRN No': r.g.grnNo, 'GRN Date': r.g.grnDate, 'PO No': r.p.docNo, 'PO Date': r.p.docDate,
+    'Creditor Code': r.g.creditorCode, 'Creditor Name': r.g.creditorName, 'Item Code': r.g.itemCode, Description: r.g.description, Qty: r.qty,
+    'PO Price': Math.round(r.poPrice * 10000) / 10000, 'GRN Price': Math.round(r.grnPrice * 10000) / 10000, 'Value at PO Price': Math.round(r.poVal * 100) / 100,
+    'GRN Amount': Math.round(r.amt * 100) / 100, Difference: Math.round(r.diff * 100) / 100, Reason: r.over ? 'Extra qty (more than PO)' : 'Price' }, r.g.loc));
+  exportStore.pcTable = { summary: exp, detail: null };
+  if (!rows.length) { body.innerHTML = html + '<div class="empty-state">✓ No price differences for these months — every GRN matches its PO price.</div>'; return; }
+  const keyOf = grp === 'item' ? r => up(r.g.itemCode) : grp === 'po' ? r => up(r.p.docNo) : r => r.g.creditorCode || up(r.g.creditorName);
+  const groups = {};
+  rows.forEach(r => { (groups[keyOf(r)] = groups[keyOf(r)] || []).push(r); });
+  const keys = Object.keys(groups).sort((a, b) => Math.abs(groups[b].reduce((s, r) => s + r.diff, 0)) - Math.abs(groups[a].reduce((s, r) => s + r.diff, 0)));
+  html += keys.map(k => {
+    const G = groups[k], f = G[0], d = G.reduce((s, r) => s + r.diff, 0);
+    const title = grp === 'item' ? `<b>${esc(f.g.itemCode)}</b> ${esc(f.g.description)}` : grp === 'po' ? `${poLink(f.p.docNo, f.p.loc)} · ${esc(f.p.creditorName)}`
+      : `<b>${esc(f.g.creditorName)}</b> <span class="muted">${esc(f.g.creditorCode || '')}</span>`;
+    return folderHtml('fold-leaf', title, `<span class="fs-n">${G.length} line${G.length > 1 ? 's' : ''}</span><span class="fs-amt">${sign(d)}</span>`, () =>
+      `<table class="sub-item-table"><thead><tr><th>GRN No.</th><th>GRN Date</th><th>PO No.</th>${grp === 'cred' ? '<th>Item</th>' : '<th>Creditor</th>'}<th class="text-right">Qty</th>
+        <th class="text-right">PO Price</th><th class="text-right">GRN Price</th><th class="text-right">At PO Price</th><th class="text-right">GRN Amount</th><th class="text-right">Difference</th></tr></thead><tbody>` +
+      G.slice().sort((a, b) => a.g.grnIso.localeCompare(b.g.grnIso)).map(r => `<tr><td><b>${esc(r.g.grnNo)}</b>${locTag(r.g.loc)}</td><td>${esc(r.g.grnDate)}</td><td>${poLink(r.p.docNo, r.p.loc)}</td>
+        <td>${grp === 'cred' ? `<b>${esc(r.g.itemCode)}</b> ${esc(r.g.description)}` : esc(r.g.creditorName)}</td><td class="text-right">${qtyFmt(r.qty)}</td>
+        <td class="text-right">${r.over ? '<span class="gk gk-oldpo" title="Received more than the PO quantity">extra qty</span>' : fmt4(r.poPrice)}</td><td class="text-right">${r.qty > EPS ? fmt4(r.grnPrice) : '-'}</td>
+        <td class="text-right">${fmt(r.poVal)}</td><td class="text-right">${fmt(r.amt)}</td><td class="text-right">${sign(r.diff)}</td></tr>`).join('') + '</tbody></table>', true);
+  }).join('');
+  body.innerHTML = html;
+}
+function fmt4(v) { return (Math.round(v * 10000) / 10000).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
 
 // ----------------------------------------------------
 // Start up
