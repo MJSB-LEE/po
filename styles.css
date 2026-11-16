@@ -1042,3 +1042,12 @@ details.fold-doc .fold-body { padding-left: 30px; }
 body:not(.cloud-mode) .cloud-only { display: none; }
 body.cloud-mode .folder-only { display: none; }
 #cloudInfo code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+
+/* ---- Price Check ---- */
+.pc-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 6px 0 14px; }
+.pc-kpis > div { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 14px; }
+.pc-kpis span { display: block; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; color: #64748b; }
+.pc-kpis b { font-size: 1.25rem; display: block; margin: 2px 0; }
+.pc-kpis small { color: #64748b; font-size: 0.75rem; }
+.pc-up { color: #b91c1c; font-weight: 800; } .pc-dn { color: #15803d; font-weight: 800; }
+@media (max-width: 900px) { .pc-kpis { grid-template-columns: 1fr; } }
