@@ -1076,3 +1076,31 @@ table.sub-item-table td.pc-item b { white-space: nowrap; }
 
 .auth-home { position: absolute; top: 18px; left: 18px; color: #e2e8f0; text-decoration: none; font-weight: 700; font-size: .9rem; padding: 8px 14px; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; background: rgba(255,255,255,.08); }
 .auth-home:hover { background: rgba(255,255,255,.18); color: #fff; }
+
+/* v4.9 — column headings stay on top while scrolling (page scrolls inside the main area) */
+@media screen {
+  body { height: 100vh; overflow: hidden; }
+  .app-sidebar { height: 100vh; overflow-y: auto; }
+  .app-main { height: 100vh; overflow: auto; }
+  .table-container { overflow: visible; }
+  .table-container > table > thead { position: sticky; top: 0; z-index: 6; }
+  .table-container > table > thead th, .table-container > table > thead td { background-clip: border-box; }
+  .table-container > table > thead { background: #fff; }
+  table.sum-table thead tr.sum-head > * { background: #d9e1f2; }
+  table.sum-table thead tr.sum-tot > * { background: #fff2cc; }
+  table.sum-table thead tr.sum-amt > * { background: #fff; }
+}
+@media print {
+  body, .app-main, .app-sidebar { height: auto !important; overflow: visible !important; }
+  table.sum-table td.sum-code, table.sum-table td.nw { white-space: nowrap !important; }
+  thead { display: table-header-group; }
+}
+td.nw { white-space: nowrap; }
+#creditorBalTable td.cb-name { white-space: normal; min-width: 220px; }
+#creditorBalTable tr.cb-total td { background: #fff7d6; font-weight: 800; border-bottom: 2px solid #cbd5e1; }
+@media screen {
+  /* separate borders so the sticky heading has no see-through gaps */
+  .table-container > table.audit-table { border-collapse: separate; border-spacing: 0; }
+  .table-container > table.sum-table { border-collapse: separate; border-spacing: 0; border-top: 1px solid #000; border-left: 1px solid #000; }
+  .table-container > table.sum-table > thead > tr > *, .table-container > table.sum-table > tbody > tr > * { border-width: 0 1px 1px 0; }
+}
