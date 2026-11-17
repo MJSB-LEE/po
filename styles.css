@@ -1073,3 +1073,6 @@ table.sub-item-table td.pc-item { white-space: normal; min-width: 260px; max-wid
 table.sub-item-table td.pc-item b { white-space: nowrap; }
 .xq { color: #c2410c; font-weight: 800; background: #ffedd5; padding: 1px 6px; border-radius: 6px; white-space: nowrap; }
 .pc-legend { font-size: .8rem; color: #64748b; margin: -4px 0 12px; }
+
+.auth-home { position: absolute; top: 18px; left: 18px; color: #e2e8f0; text-decoration: none; font-weight: 700; font-size: .9rem; padding: 8px 14px; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; background: rgba(255,255,255,.08); }
+.auth-home:hover { background: rgba(255,255,255,.18); color: #fff; }
