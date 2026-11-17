@@ -6,7 +6,7 @@
 // for location descriptions.
 // ====================================================
 
-const APP_VERSION = 'Version 4.8 · 17/11/2026';
+const APP_VERSION = 'Version 4.9 · 17/11/2026';
 let rawPOList = [];     // one entry per PO line  (has .loc = location code)
 let rawGRNList = [];    // one entry per GRN line (has .loc = location code)
 let dataVersion = 0;    // bumps whenever data changes (for pickers)
@@ -2206,11 +2206,11 @@ function renderCreditorBalances() {
   const tbody = document.getElementById('creditorBalTbody');
   const tfoot = document.getElementById('creditorBalTfoot');
   const month = populateMonthPicker('creditorMonthPicker');
-  if (!hasScopedData()) { updateKPIs([]); return emptyRow(tbody, tfoot, 6, noDataMsg()); }
+  if (!hasScopedData()) { updateKPIs([]); return emptyRow(tbody, tfoot, 7, noDataMsg()); }
 
   const lines = getScopedPOLines(month);
   updateKPIs(lines);
-  if (!lines.length) return emptyRow(tbody, tfoot, 6, 'No creditor records for this month and filters.');
+  if (!lines.length) return emptyRow(tbody, tfoot, 7, 'No creditor records for this month and filters.');
 
   const statusMap = buildStatusMap();
   const creds = {};
@@ -2240,21 +2240,28 @@ function renderCreditorBalances() {
 
     html += `<tr>
       <td class="text-center">${arrow(subId)}</td>
-      <td><b>${esc(c.code)}</b></td><td>${esc(c.name)} <span class="muted">(${docs.length} PO${docs.length === 1 ? '' : 's'}${isMultiLocView() ? ' · ' + esc(locNames.join(', ')) : ''})</span></td>
+      <td><b>${esc(c.code)}</b></td><td class="cb-name"><span class="wrap">${esc(c.name)}</span></td>
+      <td class="text-right">${docs.length}</td>
       <td class="text-right">${rm(c.po)}</td>
       <td class="text-right" style="color:var(--accent-green);font-weight:700;">${rm(c.grn)}</td>
       <td class="text-right" style="color:${c.bal > 0 ? 'var(--accent-orange)' : '#15803d'};font-weight:800;">${rm(c.bal)}</td>
     </tr>
-    <tr id="${subId}" class="detail-subrow"><td colspan="6" class="detail-subrow-cell">
+    <tr id="${subId}" class="detail-subrow"><td colspan="7" class="detail-subrow-cell">
       <table class="sub-item-table"><thead><tr>
         <th>PO Doc No.</th><th>PO Date</th><th>Status</th><th class="text-right">PO Value (RM)</th>
         <th class="text-right">Received (RM)</th><th class="text-right">Outstanding (RM)</th>
       </tr></thead><tbody>${rows}</tbody></table></td></tr>`;
   });
 
-  tbody.innerHTML = html;
+  const nPO = Object.values(creds).reduce((a, c) => a + groupDocs(c.lines).length, 0);
+  const totRow = `<tr class="cb-total">
+    <td></td><td colspan="2">TOTAL — ${month === 'ALL' ? 'ALL MONTHS' : yymmLabel(month)} (${Object.keys(creds).length} creditors)</td>
+    <td class="text-right">${nPO}</td><td class="text-right">${rm(gPO)}</td>
+    <td class="text-right" style="color:var(--accent-green);">${rm(gGRN)}</td>
+    <td class="text-right" style="color:${gBal > 0 ? 'var(--accent-orange)' : '#15803d'};">${rm(gBal)}</td></tr>`;
+  tbody.innerHTML = totRow + html;
   tfoot.innerHTML = `<tr>
-    <td colspan="3">TOTAL — ${month === 'ALL' ? 'ALL MONTHS' : yymmLabel(month)} (${Object.keys(creds).length} creditors)</td>
+    <td colspan="4">TOTAL — ${month === 'ALL' ? 'ALL MONTHS' : yymmLabel(month)} (${Object.keys(creds).length} creditors)</td>
     <td class="text-right">${rm(gPO)}</td>
     <td class="text-right" style="color:#4ade80;">${rm(gGRN)}</td>
     <td class="text-right" style="color:${gBal > 0 ? '#fb923c' : '#ffffff'};">${rm(gBal)}</td>
@@ -4477,7 +4484,7 @@ function renderPoGrnSummary() {
       const id = `sumSub_${bi}_${i}`;
       const docs = Object.values(r.docs).sort((a, c) => a.iso.localeCompare(c.iso));
       const sub = docs.map(d => `<tr>
-          <td>${poLink(d.docNo)}${isMultiLocView() && !S.split ? locTag([...d.locs].sort()) : ''}${d.fromLoc && d.xin ? ` <span class="gk gk-mixed" title="PO raised at ${esc(d.fromLoc)} — the GRN received here is shown in B/F and GRN">PO at ${esc(d.fromLoc)} · GRN here</span>` : ''}${Math.abs(d.pd || 0) >= 0.005 ? ` <span class="gk gk-mixed" title="GRN amount ${(d.pd > 0 ? 'higher' : 'lower')} than the PO price (price or extra quantity)">price diff ${d.pd > 0 ? '+' : '−'}${fmt(Math.abs(d.pd))}</span>` : ''}${d.outTo ? ` <span class="gk gk-oldpo" title="GRN of this PO received at other locations (shown in their tables)">↪ ${esc(Object.keys(d.outTo).sort().map(l => `${l}: ${fmt(d.outTo[l])}`).join(', '))}</span>` : ''}</td><td>${esc(d.docDate)}</td>
+          <td>${poLink(d.docNo)}${isMultiLocView() && !S.split ? locTag([...d.locs].sort()) : ''}${d.fromLoc && d.xin ? ` <span class="gk gk-mixed" title="PO raised at ${esc(d.fromLoc)} — the GRN received here is shown in B/F and GRN">PO at ${esc(d.fromLoc)} · GRN here</span>` : ''}${Math.abs(d.pd || 0) >= 0.005 ? ` <span class="gk gk-mixed" title="GRN amount ${(d.pd > 0 ? 'higher' : 'lower')} than the PO price (price or extra quantity)">price diff ${d.pd > 0 ? '+' : '−'}${fmt(Math.abs(d.pd))}</span>` : ''}${d.outTo ? ` <span class="gk gk-oldpo" title="GRN of this PO received at other locations (shown in their tables)">↪ ${esc(Object.keys(d.outTo).sort().map(l => `${l}: ${fmt(d.outTo[l])}`).join(', '))}</span>` : ''}</td><td class="nw">${esc(d.docDate)}</td>
           <td class="text-right">${sumAmt(d.bf)}</td><td class="text-right">${sumAmt(d.nw)}</td><td class="text-right">${sumAmt(d.bf + d.nw)}</td>
           <td class="text-right">${sumAmt(d.grn)}</td><td class="text-right">${sumAmt(d.cx)}</td>
           <td class="text-right" style="font-weight:700;${d.cf > 0.005 ? 'color:var(--accent-orange);' : ''}">${sumAmt(d.cf)}</td></tr>`).join('');
