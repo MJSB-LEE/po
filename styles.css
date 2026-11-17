@@ -1065,3 +1065,11 @@ table.loc-master-table td, table.up-dtable td, table.up-mtable td, table.cmp-tab
 .del-row select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; }
 .del-prev { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 8px 12px; margin: 6px 0 10px; font-size: 0.86rem; }
 .del-prev ul { margin: 4px 0 4px 18px; }
+
+.home-link{display:block;padding:9px 18px;font-size:.82rem;font-weight:600;color:#cbd5e1;text-decoration:none;background:#0f172a;border-bottom:1px solid #334155}
+.home-link:hover{color:#38bdf8;background:#1e293b}
+
+table.sub-item-table td.pc-item { white-space: normal; min-width: 260px; max-width: 460px; }
+table.sub-item-table td.pc-item b { white-space: nowrap; }
+.xq { color: #c2410c; font-weight: 800; background: #ffedd5; padding: 1px 6px; border-radius: 6px; white-space: nowrap; }
+.pc-legend { font-size: .8rem; color: #64748b; margin: -4px 0 12px; }
