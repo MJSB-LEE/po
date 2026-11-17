@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=4.5">
+  <link rel="stylesheet" href="styles.css?v=4.8">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -161,7 +161,7 @@
         <div class="up-steps">
           <div><b>1</b> In AutoCount export <b>last month only</b> (e.g. 01/10/2026 – 31/10/2026): PO Detail Listing and GRN Detail Listing, with the Location column.</div>
           <div><b>2</b> Drop both files above. You will see a <b>review</b>: same data, or which PO / GRN were added, removed or changed.</div>
-          <div><b>3</b> Click <b>Accept</b>, then <b>💾 Save to Shared Folder</b> at the top so everyone sees it.</div>
+          <div><b>3</b> Click <b>Accept</b>, then <b>💾 Save</b> (Save to Cloud) at the top so everyone sees it.</div>
         </div>
 
         <!-- 3. what is saved -->
@@ -525,10 +525,11 @@
   </div>
 
   <!-- Login -->
-  <div id="authScreen" class="auth-screen"><div class="auth-card" id="authCard"></div></div>
+  <div id="authScreen" class="auth-screen"><a id="authHome" href="../" class="auth-home" style="display:none">← Main Menu</a><div class="auth-card" id="authCard"></div></div>
+  <script>if(/github\.io$/.test(location.hostname))document.getElementById('authHome').style.display='inline-block';</script>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=4.5"></script>
-  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 4.5") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+  <script src="app.js?v=4.8"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 4.8") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
