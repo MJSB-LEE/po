@@ -6,7 +6,7 @@
 // for location descriptions.
 // ====================================================
 
-const APP_VERSION = 'Version 4.3 · 16/11/2026';
+const APP_VERSION = 'Version 4.5 · 17/11/2026';
 let rawPOList = [];     // one entry per PO line  (has .loc = location code)
 let rawGRNList = [];    // one entry per GRN line (has .loc = location code)
 let dataVersion = 0;    // bumps whenever data changes (for pickers)
@@ -5142,10 +5142,17 @@ function renderPriceCheck() {
       if (!g || !picked.has(g.grnYYMM) || !locAllowed(l) || !grnMatchesSearch(g, q)) return;
       const poVal = over ? 0 : qq * p.unitCost;
       const diff = amt - poVal;
-      if (Math.abs(diff) < minAmt) return;
+      if (Math.abs(diff) < 0.005) return;
       rows.push({ p, g, qty: qq, amt, poVal, diff, over, poPrice: p.unitCost, grnPrice: qq > EPS ? amt / qq : 0 });
     });
   });
+  // same GRN + item lines that cancel each other out (e.g. PO line moved / transferred, net RM 0) → hide
+  const net = {};
+  rows.forEach(r => { const k = up(r.g.grnNo) + '|' + up(r.g.itemCode) + '|' + up(r.g.loc); net[k] = (net[k] || 0) + r.diff; });
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i], k = up(r.g.grnNo) + '|' + up(r.g.itemCode) + '|' + up(r.g.loc);
+    if (Math.abs(net[k]) < 0.005 || Math.abs(r.diff) < minAmt) rows.splice(i, 1);
+  }
   const tot = rows.reduce((a, r) => a + r.diff, 0), up_ = rows.filter(r => r.diff > 0).reduce((a, r) => a + r.diff, 0), dn = tot - up_;
   const mLbl = [...picked].sort().map(m => monApos(m)).join(', ');
   const sign = v => `<span class="${v > 0 ? 'pc-up' : 'pc-dn'}">${v > 0 ? '+' : '−'}${rm(Math.abs(v))}</span>`;
@@ -5153,7 +5160,8 @@ function renderPriceCheck() {
       <div><span>Price difference (GRN − PO)</span><b>${sign(tot)}</b><small>${mLbl || '-'} · same as the "price difference" in Summary PO vs GRN</small></div>
       <div><span>GRN higher than PO</span><b class="pc-up">+${rm(up_)}</b><small>${rows.filter(r => r.diff > 0).length} lines — supplier charged more / extra qty</small></div>
       <div><span>GRN lower than PO</span><b class="pc-dn">−${rm(Math.abs(dn))}</b><small>${rows.filter(r => r.diff < 0).length} lines — cheaper than ordered</small></div>
-    </div>`;
+    </div>
+    <div class="pc-legend"><span class="xq">+12.5</span> orange qty = <b>extra qty</b> (received more than the PO qty, so it has no PO price) · <span class="pc-up">+RM</span> GRN cost more · <span class="pc-dn">−RM</span> GRN cost less</div>`;
   const exp = rows.map(r => withLoc({ 'GRN Month': monApos(r.g.grnYYMM, true), 'GRN No': r.g.grnNo, 'GRN Date': r.g.grnDate, 'PO No': r.p.docNo, 'PO Date': r.p.docDate,
     'Creditor Code': r.g.creditorCode, 'Creditor Name': r.g.creditorName, 'Item Code': r.g.itemCode, Description: r.g.description, Qty: r.qty,
     'PO Price': Math.round(r.poPrice * 10000) / 10000, 'GRN Price': Math.round(r.grnPrice * 10000) / 10000, 'Value at PO Price': Math.round(r.poVal * 100) / 100,
@@ -5172,9 +5180,10 @@ function renderPriceCheck() {
       `<table class="sub-item-table"><thead><tr><th>GRN No.</th><th>GRN Date</th><th>PO No.</th>${grp === 'cred' ? '<th>Item</th>' : '<th>Creditor</th>'}<th class="text-right">Qty</th>
         <th class="text-right">PO Price</th><th class="text-right">GRN Price</th><th class="text-right">At PO Price</th><th class="text-right">GRN Amount</th><th class="text-right">Difference</th></tr></thead><tbody>` +
       G.slice().sort((a, b) => a.g.grnIso.localeCompare(b.g.grnIso)).map(r => `<tr><td><b>${esc(r.g.grnNo)}</b>${locTag(r.g.loc)}</td><td>${esc(r.g.grnDate)}</td><td>${poLink(r.p.docNo, r.p.loc)}</td>
-        <td>${grp === 'cred' ? `<b>${esc(r.g.itemCode)}</b> <span class="wrap">${esc(r.g.description)}</span>` : esc(r.g.creditorName)}</td><td class="text-right">${qtyFmt(r.qty)}</td>
-        <td class="text-right">${r.over ? '<span class="gk gk-oldpo" title="Received more than the PO quantity">extra qty</span>' : fmt4(r.poPrice)}</td><td class="text-right">${r.qty > EPS ? fmt4(r.grnPrice) : '-'}</td>
-        <td class="text-right">${fmt(r.poVal)}</td><td class="text-right">${fmt(r.amt)}</td><td class="text-right">${sign(r.diff)}</td></tr>`).join('') + '</tbody></table>', true);
+        <td class="pc-item">${grp === 'cred' ? `<b>${esc(r.g.itemCode)}</b> ${esc(r.g.description)}` : esc(r.g.creditorName)}</td>
+        <td class="text-right">${r.over ? `<span class="xq" title="Extra qty — received more than the PO quantity">+${qtyFmt(r.qty)}</span>` : qtyFmt(r.qty)}</td>
+        <td class="text-right">${fmt4(r.poPrice)}</td><td class="text-right">${r.qty > EPS ? fmt4(r.grnPrice) : '-'}</td>
+        <td class="text-right">${r.over ? '<span class="muted">—</span>' : fmt(r.poVal)}</td><td class="text-right">${fmt(r.amt)}</td><td class="text-right">${sign(r.diff)}</td></tr>`).join('') + '</tbody></table>', true);
   }).join('');
   body.innerHTML = html;
 }
