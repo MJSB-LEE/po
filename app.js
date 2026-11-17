@@ -6,7 +6,7 @@
 // for location descriptions.
 // ====================================================
 
-const APP_VERSION = 'Version 4.5 · 17/11/2026';
+const APP_VERSION = 'Version 4.8 · 17/11/2026';
 let rawPOList = [];     // one entry per PO line  (has .loc = location code)
 let rawGRNList = [];    // one entry per GRN line (has .loc = location code)
 let dataVersion = 0;    // bumps whenever data changes (for pickers)
@@ -2973,8 +2973,10 @@ function mergeMyChanges(latestDb) {
       t.cxLines = (mine.cxLines || []).slice(); t.meta.cxFile = mine.meta.cxFile; t.meta.cxLoadedAt = mine.meta.cxLoadedAt;
     } else if (e.part === 'delrange') {
       const inR = iso => { const m = iso ? isoToYYMM(iso) : ''; return m && m >= e.from && m <= e.to; };
-      if (e.what !== 'grn') t.po = (t.po || []).filter(p => !inR(p.iso));
-      if (e.what !== 'po') t.grn = (t.grn || []).filter(g => !inR(g.grnIso));
+      const w = delWhatSet(e.what);
+      if (w.po) t.po = (t.po || []).filter(p => !inR(p.iso));
+      if (w.grn) t.grn = (t.grn || []).filter(g => !inR(g.grnIso));
+      if (w.cx) t.cxLines = (t.cxLines || []).filter(x => !inR(x.iso));
     } else if (e.part === 'clear') {
       t.po = []; t.grn = []; ['poFile', 'poLoadedAt', 'grnFile', 'grnLoadedAt'].forEach(k => delete t.meta[k]);
     } else if (e.part === 'credlist') {
@@ -4462,6 +4464,10 @@ function renderPoGrnSummary() {
   const poStart = rawPOList.map(p => p.iso).filter(Boolean).sort()[0] || '';
   let html = '';
   if (poStart > isoMinusDay(per.start)) html += `<div class="cmp-note note-warn no-print">⚠ Your PO file starts on ${dateDMY(poStart)}. "Previous PO Bal. B/F" only includes POs from that date — export the PO listing from further back for a complete B/F.</div>`;
+  { const sm = k => S.blocks.reduce((s, b) => s + (b.tot[k] || 0), 0);
+    const nw = sm('nw'), noPo = sm('noPo'), oldPo = sm('np') - noPo;
+    if (noPo > 0.005 || oldPo > 0.005) html += `<div class="cmp-note no-print">ℹ ${noPo > 0.005 ? `"Current PO" = PO listing <b>${rm(nw - noPo)}</b> + GRN without PO no. <b>${rm(noPo)}</b> (e.g. internal / direct GRN).` : ''}
+      ${oldPo > 0.005 ? ` "Previous PO Bal. B/F" includes <b>${rm(oldPo)}</b> GRN for older POs not uploaded.` : ''}</div>`; }
   if (per.gap) html += `<div class="cmp-note no-print">ℹ The months you ticked are not next to each other — the table covers the whole period ${dateDMY(per.start)} – ${dateDMY(per.end)}.</div>`;
   if (!S.blocks.length) html += '<div class="empty-state">No PO movement in this period for these filters.</div>';
 
@@ -5193,10 +5199,12 @@ function fmt4(v) { return (Math.round(v * 10000) / 10000).toLocaleString('en-US'
 // ====================================================
 // DELETE DATA by months / years (one place, admin only)
 // ====================================================
+function delWhatSet(what) { return { po: what === 'both' || what === 'po', grn: what === 'both' || what === 'grn', cx: what === 'both' || what === 'cx' }; }
 function delMonthsList() {
   const ms = new Set();
   store.po.forEach(p => { if (p.iso) ms.add(isoToYYMM(p.iso)); });
   store.grn.forEach(g => { if (g.grnIso) ms.add(isoToYYMM(g.grnIso)); });
+  (store.cxLines || []).forEach(x => { if (x.iso) ms.add(isoToYYMM(x.iso)); });
   return [...ms].filter(m => m && m !== '0000').sort();
 }
 function delSelection() {
@@ -5211,16 +5219,19 @@ function delPreview() {
   const { what, from, to } = delSelection();
   if (!from || !to) { box.innerHTML = ''; return null; }
   const inR = iso => { const m = iso ? isoToYYMM(iso) : ''; return m && m >= from && m <= to; };
-  const po = what !== 'grn' ? store.po.filter(p => inR(p.iso)) : [];
-  const grn = what !== 'po' ? store.grn.filter(g => inR(g.grnIso)) : [];
+  const w = delWhatSet(what);
+  const po = w.po ? store.po.filter(p => inR(p.iso)) : [];
+  const grn = w.grn ? store.grn.filter(g => inR(g.grnIso)) : [];
+  const cx = w.cx ? (store.cxLines || []).filter(x => inR(x.iso)) : [];
   const poDocs = new Set(po.map(p => up(p.docNo)));
-  const orphan = what !== 'grn' ? store.grn.filter(g => !inR(g.grnIso) && g.poNo && poDocs.has(up(g.poNo))).length : 0;
+  const orphan = w.po ? store.grn.filter(g => !inR(g.grnIso) && g.poNo && poDocs.has(up(g.poNo))).length : 0;
   const sum = (L, k) => L.reduce((s, x) => s + (+x[k] || 0), 0);
   box.innerHTML = `<div class="del-prev">Will delete for <b>${esc(companyDisplay(db.current))}</b>, ${monApos(from, true)} – ${monApos(to, true)}:
-    <ul>${what !== 'grn' ? `<li>PO: <b>${po.length.toLocaleString()}</b> lines (${poDocs.size} POs) · ${rm(sum(po, 'lineSubTotal'))}</li>` : ''}
-    ${what !== 'po' ? `<li>GRN: <b>${grn.length.toLocaleString()}</b> lines (${new Set(grn.map(g => up(g.grnNo))).size} GRNs) · ${rm(sum(grn, 'subTotal'))}</li>` : ''}</ul>
+    <ul>${w.po ? `<li>PO: <b>${po.length.toLocaleString()}</b> lines (${poDocs.size} POs) · ${rm(sum(po, 'lineSubTotal'))}</li>` : ''}
+    ${w.grn ? `<li>GRN: <b>${grn.length.toLocaleString()}</b> lines (${new Set(grn.map(g => up(g.grnNo))).size} GRNs) · ${rm(sum(grn, 'subTotal'))}</li>` : ''}
+    ${w.cx ? `<li>Cancelled PO (AutoCount file, by cancel date): <b>${cx.length.toLocaleString()}</b> lines · ${rm(sum(cx, 'amt'))}</li>` : ''}</ul>
     ${orphan ? `<div class="note-warn">⚠ ${orphan} GRN lines in other months belong to these POs — after deleting they will show as "PO not uploaded" (in B/F).</div>` : ''}</div>`;
-  return { what, from, to, po: po.length, grn: grn.length };
+  return { what, from, to, po: po.length, grn: grn.length, cx: cx.length };
 }
 function delQuickYear(y) {
   const ms = delMonthsList().filter(m => m.slice(0, 2) === String(y).slice(2));
@@ -5240,7 +5251,7 @@ function renderDeleteCard() {
   const opt = ms.slice().reverse().map(m => `<option value="${m}">${monApos(m, true)}</option>`).join('');
   const prev = delSelection();
   box.innerHTML = `<div class="del-row">
-      <label>Delete</label><select id="delWhat" onchange="delPreview()"><option value="both">PO + GRN</option><option value="po">PO only</option><option value="grn">GRN only</option></select>
+      <label>Delete</label><select id="delWhat" onchange="delPreview()"><option value="both">PO + GRN + Cancelled PO</option><option value="po">PO only</option><option value="grn">GRN only</option><option value="cx">Cancelled PO only</option></select>
       <label>from</label><select id="delFrom" onchange="delPreview()">${opt}</select>
       <label>to</label><select id="delTo" onchange="delPreview()">${opt}</select>
       <span class="muted small-text">Whole year:</span> ${years.map(y => `<button class="btn-small" onclick="delQuickYear(${y})">${y}</button>`).join(' ')}
@@ -5255,14 +5266,16 @@ function renderDeleteCard() {
 function deleteRange() {
   if (!currentUser || !currentUser.admin) return alert('Only the admin can delete data.');
   const p = delPreview();
-  if (!p || (!p.po && !p.grn)) return alert('Nothing to delete for these months.');
-  const label = `${p.what === 'both' ? 'PO + GRN' : p.what === 'po' ? 'PO' : 'GRN'} ${monApos(p.from, true)} – ${monApos(p.to, true)}`;
-  const t = prompt(`Delete ${label} for ${companyDisplay(db.current)}?\n${p.po ? p.po + ' PO lines ' : ''}${p.grn ? p.grn + ' GRN lines' : ''}\n\nType DELETE to confirm:`);
+  if (!p || (!p.po && !p.grn && !p.cx)) return alert('Nothing to delete for these months.');
+  const label = `${({ both: 'PO + GRN + Cancelled PO', po: 'PO', grn: 'GRN', cx: 'Cancelled PO' })[p.what]} ${monApos(p.from, true)} – ${monApos(p.to, true)}`;
+  const t = prompt(`Delete ${label} for ${companyDisplay(db.current)}?\n${p.po ? p.po + ' PO lines  ' : ''}${p.grn ? p.grn + ' GRN lines  ' : ''}${p.cx ? p.cx + ' cancelled lines' : ''}\n\nType DELETE to confirm:`);
   if (!t || t.trim().toUpperCase() !== 'DELETE') return;
   const inR = iso => { const m = iso ? isoToYYMM(iso) : ''; return m && m >= p.from && m <= p.to; };
-  if (p.what !== 'grn') store.po = store.po.filter(x => !inR(x.iso));
-  if (p.what !== 'po') store.grn = store.grn.filter(x => !inR(x.grnIso));
-  logAction(`Deleted ${label} (${p.po ? p.po + ' PO lines' : ''}${p.po && p.grn ? ', ' : ''}${p.grn ? p.grn + ' GRN lines' : ''})`, null, 'delrange');
+  const w = delWhatSet(p.what);
+  if (w.po) store.po = store.po.filter(x => !inR(x.iso));
+  if (w.grn) store.grn = store.grn.filter(x => !inR(x.grnIso));
+  if (w.cx) store.cxLines = (store.cxLines || []).filter(x => !inR(x.iso));
+  logAction(`Deleted ${label} (${[p.po && p.po + ' PO lines', p.grn && p.grn + ' GRN lines', p.cx && p.cx + ' cancelled lines'].filter(Boolean).join(', ')})`, null, 'delrange');
   Object.assign(pendingLog[pendingLog.length - 1], { from: p.from, to: p.to, what: p.what });
   afterDataChange();
   renderUploadPage();
