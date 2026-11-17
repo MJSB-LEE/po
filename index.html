@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=4.3">
+  <link rel="stylesheet" href="styles.css?v=4.5">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -16,6 +16,8 @@
       <span>📊</span>
       <span>AutoCount Portal</span>
     </div>
+    <a id="homeLink" href="../" class="home-link" style="display:none">🏠 Main Menu</a>
+    <script>if(/github\.io$/.test(location.hostname))document.getElementById('homeLink').style.display='block';</script>
 
     <ul class="sidebar-menu">
 
@@ -526,7 +528,7 @@
   <div id="authScreen" class="auth-screen"><div class="auth-card" id="authCard"></div></div>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=4.3"></script>
-  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 4.3") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+  <script src="app.js?v=4.5"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 4.5") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
