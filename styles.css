@@ -1126,3 +1126,31 @@ table.bk-table td:first-child, table.bk-table th:first-child { text-align: left;
 .bk-opt select { padding: 4px 6px; }
 .bk-warn { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 8px 10px; color: #9a3412; font-size: .8rem; margin-top: 8px; }
 .gk-new { background: #dbeafe; color: #1d4ed8; }
+
+/* v5.2 Cancelled PO page */
+.cx-src { display: inline-block; font-size: .72rem; font-weight: 700; padding: 1px 7px; border-radius: 6px; white-space: nowrap; }
+.cx-src.file { background: #e0f2fe; color: #075985; }
+.cx-src.man { background: #fef3c7; color: #92400e; }
+details.cx-unm > summary { background: #f8fafc; }
+/* v5.2 Sign-off + page numbers (print only) */
+.sign-off { display: none; }
+@media print {
+  @page { margin: 6mm 6mm 10mm;
+    @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #64748b; font-family: "Segoe UI", Arial, sans-serif; } }
+  .sign-off { display: flex !important; justify-content: flex-start; gap: 14mm; margin: 0 4mm; padding-top: 10mm; break-inside: avoid; page-break-inside: avoid; }
+  .sign-spacer { display: block !important; }
+  .so-box { flex: 0 0 52mm; font-size: 9pt; color: #0f172a; }
+  .so-lbl { font-weight: 700; margin-bottom: 34px; }
+  .so-line { border-bottom: 1px solid #0f172a; margin-bottom: 4px; }
+  .so-row { display: flex; gap: 6px; margin-top: 6px; align-items: flex-end; }
+  .so-row b { flex: 1; border-bottom: 1px dotted #94a3b8; min-height: 12px; }
+  .so-row span { width: 40px; color: #475569; }
+}
+
+.cx-sub { font-size: .72rem; color: #64748b; white-space: nowrap; margin-top: 1px; }
+.cx-amt { color: #9a3412 !important; }
+table.sub-item-table td.cx-item { min-width: 200px; max-width: 380px; }
+
+@media print { .sum-keep { break-inside: avoid; page-break-inside: avoid; } }
+
+.sign-spacer { display: none; height: 0; }
