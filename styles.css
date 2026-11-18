@@ -1172,3 +1172,10 @@ table.sub-item-table td.cx-item { min-width: 200px; max-width: 380px; }
 .st-del { color: #b91c1c; font-weight: 700; white-space: nowrap; } .st-chg { color: #b45309; font-weight: 700; white-space: nowrap; } .st-add { color: #15803d; font-weight: 700; white-space: nowrap; }
 table.log-det-table td.log-why { min-width: 220px; white-space: normal; color: #475569; font-size: .8rem; }
 select.user-co { padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: .8rem; max-width: 220px; }
+
+/* Users table must stay inside its card */
+.settings-card:has(#userAdmin) { max-width: 1180px; }
+#userAdmin .table-container, #userAdmin { overflow-x: auto; }
+#userAdmin table td:last-child { white-space: normal; min-width: 230px; }
+#userAdmin table td:last-child .btn, #userAdmin table td:last-child label { margin: 2px 0; white-space: nowrap; }
+#userAdmin select.user-co { max-width: 170px; }
