@@ -367,6 +367,7 @@ const TAB_TITLES = {
   'tab-po-grn-summary': 'Summary PO vs GRN',
   'tab-po-outstanding': 'PO Outstanding',
   'tab-po-completed': 'PO Completed',
+  'tab-cancel-po': 'Cancelled PO',
   'tab-grn-details': 'GRN Received Listing',
   'tab-price-check': 'Price Check (PO vs GRN)',
   'tab-creditor-bal': 'Creditor Balances'
@@ -410,13 +411,14 @@ const RENDERERS = {
   'tab-po-grn-summary': () => renderPoGrnSummary(),
   'tab-po-outstanding': () => renderPOOutstanding(),
   'tab-po-completed': () => renderPOCompleted(),
+  'tab-cancel-po': () => renderCancelPO(),
   'tab-grn-details': () => renderGRNDetails(),
   'tab-price-check': () => renderPriceCheck(),
   'tab-creditor-bal': () => renderCreditorBalances(),
   'tab-upload': () => { updateUploadSummary(); renderUploadPage(); updateKPIs(getScopedPOLines()); },
   'tab-settings': () => {
     if (cloudMode) renderCloudInfo(); else renderFolderInfo().catch(e => { const b = document.getElementById('folderInfo'); if (b) b.innerHTML = '<p class="note-warn">Error: ' + esc(e.message) + '</p>'; });
-    renderLocationSettings(); renderCompanyUI(); renderUserAdmin(); renderActivityLog(); renderCredRules(); renderBackupCard(); updateKPIs(getScopedPOLines());
+    renderLocationSettings(); renderCompanyUI(); renderUserAdmin(); renderActivityLog(); renderCredRules(); renderBackupCard(); renderSignSettings(); updateKPIs(getScopedPOLines());
   }
 };
 
@@ -427,6 +429,7 @@ const TAB_TBODY = {
   'tab-po-grn-summary': 'sumBody',
   'tab-po-outstanding': 'poOutBody',
   'tab-po-completed': 'poDoneBody',
+  'tab-cancel-po': 'cxBody',
   'tab-grn-details': 'grnDetailTbody',
   'tab-price-check': 'pcBody',
   'tab-creditor-bal': 'creditorBalTbody'
@@ -474,6 +477,7 @@ function setDefaultDateRange() {
 // Printing
 // ----------------------------------------------------
 function triggerPrint(mode) {
+  fillSignOff();
   document.body.classList.remove('print-mode-simple', 'print-mode-details');
   document.body.classList.add(mode === 'details' ? 'print-mode-details' : 'print-mode-simple');
   setTimeout(() => window.print(), 100);
@@ -3003,6 +3007,7 @@ function mergeMyChanges(latestDb) {
     } else if (e.part === 'meta') {
       if (mine.meta.displayName) t.meta.displayName = mine.meta.displayName; else delete t.meta.displayName;
       if (mine.meta.locFollowGrn === false) t.meta.locFollowGrn = false; else delete t.meta.locFollowGrn;
+      ['signRev', 'signApp'].forEach(k => { if (mine.meta[k]) t.meta[k] = mine.meta[k]; else delete t.meta[k]; });
     }
   });
   if (!out.companies[out.current]) out.current = Object.keys(out.companies)[0] || '';
@@ -4535,11 +4540,13 @@ function renderPoGrnSummary() {
   });
 
   if (S.cancels.length) {
-    html += `<div class="sum-block sum-cancels"><div class="sum-sub">Cancelled PO in this period</div>
+    const cxTot = S.cancels.reduce((a, r) => a + r.cx, 0);
+    // short list: stays on the same page if it fits (else moves whole to the next page); long list: always starts a new page
+    html += `<div class="sum-block sum-cancels ${S.cancels.length > 22 ? 'sum-break' : 'sum-keep'}"><div class="sum-sub">Cancelled PO in this period <span class="muted" style="font-weight:600">· ${S.cancels.length} line${S.cancels.length > 1 ? 's' : ''} · ${rm(cxTot)}</span></div>
       <table class="audit-table cmp-table"><thead><tr><th>PO No.</th><th>Creditor</th><th>Item</th><th>Cancel Date</th><th>Reason</th><th>By</th><th class="text-right">Amount (RM)</th></tr></thead><tbody>` +
       S.cancels.map(({ p, c, cx }) => `<tr><td>${poLink(p.docNo)}${locTag(p.loc)}</td><td><span class="wrap">${esc(p.creditorName)}</span></td><td>${esc(p.itemCode)} <span class="wrap">${esc(p.description)}</span></td>
         <td>${dateDMY(c.date)}</td><td>${esc(c.reason || '')}</td><td>${esc(c.byName || c.by || '')}</td><td class="text-right">${rmCell(cx)}</td></tr>`).join('') +
-      '</tbody></table></div>';
+      `</tbody><tfoot><tr><td colspan="6"><b>TOTAL CANCELLED PO</b></td><td class="text-right"><b>${rmCell(cxTot)}</b></td></tr></tfoot></table></div>`;
   }
   html += `<p class="muted no-print" style="margin-top:12px;font-size:0.8rem;">How it works: B/F = PO balance not yet received at ${isoShort(cutBF)}. Current PO = POs dated in the period. GRN = value received in the period against PO lines (at PO price). GRNs with <b>no PO number</b> (e.g. internal company) are added to <b>Current PO and GRN</b> of the month they were received; GRNs whose PO is <b>not uploaded</b> (older PO) are added to <b>B/F and GRN</b>. Both use the GRN amount, so C/F is not affected. Cancelled PO = lines marked as cancelled in the portal (open a PO → tick lines → Mark as cancelled). C/F = balance still not received at ${isoShort(per.end)}. Next period's B/F always equals this C/F. Location filter and search in the top bar apply.</p>`;
   body.innerHTML = html;
@@ -5204,6 +5211,140 @@ function renderPriceCheck() {
   }).join('');
   body.innerHTML = html;
 }
+// ====================================================
+// REPORT: Cancelled PO — every cancelled PO line (AutoCount cancel file + manual), by cancel month
+// ====================================================
+function cancelledQty(p) {
+  const c = cancelOf(p);
+  if (!c) return 0;
+  const s = allocateAsOf(c.date < p.iso ? p.iso : c.date);
+  const open = Math.max(0, p.qty - s.got[p.id]);
+  return c.qty ? Math.min(c.qty, open) : open;
+}
+function renderCancelPO() {
+  const body = document.getElementById('cxBody');
+  if (!body) return;
+  folderRender = {}; folderSeq = 0;
+  updateKPIs(getScopedPOLines());
+  const q = getSearchFilter();
+  const all = [];
+  rawPOList.forEach(p => { const c = cancelOf(p); if (c && c.date && p.iso && locAllowed(p.loc) && poMatchesSearch(p, q)) all.push({ p, c, m: isoToYYMM(c.date) }); });
+  const unm = (cxUnmatched || []).filter(x => x.iso && (!x.loc || locAllowed(x.loc)));
+  const months = [...new Set(all.map(r => r.m).concat(unm.map(x => isoToYYMM(x.iso))))].filter(m => m && m !== '0000').sort();
+  const sub = document.getElementById('cxSub');
+  if (!months.length) {
+    renderMonthPicker('cxPick', [], 'toggleMonthPick'); if (sub) sub.textContent = '';
+    exportStore.cxTable = { summary: [], detail: null };
+    body.innerHTML = '<div class="empty-state">No cancelled PO yet. Upload the AutoCount <b>Cancelled Purchase Order Detail Listing</b> (CSV) on the Upload page, or tick lines as cancelled inside a PO.</div>';
+    return;
+  }
+  monthPicks['cxPick:all'] = months;
+  const picked = new Set(renderMonthPicker('cxPick', months, 'toggleMonthPick'));
+  const mLbl = [...picked].sort().map(m => monApos(m, true)).join(', ');
+  if (sub) sub.textContent = mLbl ? 'CANCELLED IN ' + mLbl.toUpperCase() : '';
+  const grp = (document.getElementById('cxGroup') || {}).value || 'cred';
+  const sel = all.filter(r => picked.has(r.m));
+  const rows = [], nothing = [];
+  sel.forEach(r => { const v = cancelledValue(r.p); (v > 0.005 ? rows : nothing).push(Object.assign(r, { val: v, cq: cancelledQty(r.p) })); });
+  const um = unm.filter(x => picked.has(isoToYYMM(x.iso)));
+  const tot = rows.reduce((a, r) => a + r.val, 0);
+  const nPO = new Set(rows.map(r => up(r.p.docNo))).size, nCred = new Set(rows.map(r => r.p.creditorCode || up(r.p.creditorName))).size;
+  const src = c => c.fromFile ? `<span class="cx-src file" title="${esc(c.reason || '')}">AutoCount</span>` : `<span class="cx-src man" title="${esc(c.reason || '')}">Manual${c.byName || c.by ? ' · ' + esc(c.byName || c.by) : ''}</span>`;
+  let html = `<div class="pc-kpis cx-kpis">
+      <div><span>Total cancelled</span><b class="cx-amt">${rm(tot)}</b><small>${mLbl || '-'} · same as the "Cancelled PO" column in Summary PO vs GRN</small></div>
+      <div><span>POs</span><b>${nPO.toLocaleString()}</b><small>${rows.length.toLocaleString()} lines</small></div>
+      <div><span>Creditors</span><b>${nCred.toLocaleString()}</b><small>valued at PO price, open qty on the cancel date</small></div>
+    </div>`;
+  const exp = rows.map(r => withLoc({ 'Cancel Month': monApos(r.m, true), 'Cancel Date': dateDMY(r.c.date).replace(/\//g, '-'), 'Cancel Doc': r.c.doc || '', 'PO No': r.p.docNo, 'PO Date': r.p.docDate,
+    'Creditor Code': r.p.creditorCode, 'Creditor Name': r.p.creditorName, 'Item Code': r.p.itemCode, Description: r.p.description, 'PO Qty': r.p.qty, 'Cancelled Qty': Math.round(r.cq * 10000) / 10000,
+    'PO Price': Math.round(r.p.unitCost * 10000) / 10000, 'Cancelled (RM)': Math.round(r.val * 100) / 100, Source: r.c.fromFile ? 'AutoCount file' : 'Manual ' + (r.c.byName || r.c.by || ''), Reason: r.c.reason || '' }, r.p.loc));
+  exportStore.cxTable = { summary: exp, detail: null, sheets: um.length ? [['POs not uploaded', um.map(x => ({ 'Cancel Date': x.date, 'Cancel Doc': x.doc, 'PO No': x.poNo, 'Creditor Code': x.creditorCode, 'Creditor Name': x.creditorName, 'Item Code': x.itemCode, Description: x.description, Location: x.loc, Qty: +x.qty || 0, 'Amount (RM)': Math.round((+x.amt || 0) * 100) / 100 }))]] : [] };
+  const keyOf = grp === 'loc' ? r => up(r.p.loc) || '-' : grp === 'month' ? r => r.m : r => r.p.creditorCode || up(r.p.creditorName);
+  const groups = {};
+  rows.forEach(r => { (groups[keyOf(r)] = groups[keyOf(r)] || []).push(r); });
+  const keys = Object.keys(groups).sort(grp === 'month' ? undefined : (a, b) => groups[b].reduce((s, r) => s + r.val, 0) - groups[a].reduce((s, r) => s + r.val, 0));
+  if (!rows.length) html += '<div class="empty-state">No cancelled amount for these months.</div>';
+  html += keys.map(k => {
+    const G = groups[k], f = G[0], amt = G.reduce((s, r) => s + r.val, 0);
+    const title = grp === 'loc' ? `${locTag(f.p.loc)} <span class="wrap">${esc(locName(f.p.loc) || '')}</span>` : grp === 'month' ? `<b>${monApos(k, true)}</b>`
+      : `<b><span class="wrap">${esc(f.p.creditorName)}</span></b> <span class="muted">${esc(f.p.creditorCode || '')}</span>`;
+    const nP = new Set(G.map(r => up(r.p.docNo))).size;
+    return folderHtml('fold-leaf', title, `<span class="fs-n">${nP} PO${nP > 1 ? 's' : ''} · ${G.length} line${G.length > 1 ? 's' : ''}</span><span class="fs-amt cx-amt">${rm(amt)}</span>`, () =>
+      `<table class="sub-item-table"><thead><tr><th>Cancel Date / Doc</th><th>PO No. / Date</th>${grp === 'cred' ? '<th>Item</th>' : '<th>Creditor / Item</th>'}
+        <th class="text-right">PO Qty</th><th class="text-right">Cancel Qty</th><th class="text-right">PO Price</th><th class="text-right">Cancelled (RM)</th><th>Source</th></tr></thead><tbody>` +
+      G.slice().sort((a, b) => a.c.date.localeCompare(b.c.date) || a.p.docNo.localeCompare(b.p.docNo)).map(r => `<tr><td>${dateDMY(r.c.date).replace(/\//g, '-')}<div class="cx-sub">${esc(r.c.doc || '-')}</div></td>
+        <td>${poLink(r.p.docNo, r.p.loc)}${locTag(r.p.loc)}<div class="cx-sub">${esc(r.p.docDate)}</div></td>
+        <td class="pc-item cx-item">${grp === 'cred' ? '' : `<span class="muted">${esc(r.p.creditorName)}</span><br>`}<b>${esc(r.p.itemCode)}</b> ${esc(r.p.description)}</td>
+        <td class="text-right">${qtyFmt(r.p.qty)}</td><td class="text-right">${qtyFmt(Math.round(r.cq * 10000) / 10000)}</td><td class="text-right">${fmt4(r.p.unitCost)}</td>
+        <td class="text-right"><b>${fmt(r.val)}</b></td><td>${src(r.c)}</td></tr>`).join('') + '</tbody></table>', true);
+  }).join('');
+  if (nothing.length) html += `<div class="muted small-text" style="margin:8px 2px">ℹ ${nothing.length} cancelled line${nothing.length > 1 ? 's were' : ' was'} already fully received before the cancel date — nothing left to cancel, so not counted.</div>`;
+  if (um.length) {
+    const ua = um.reduce((a, x) => a + (+x.amt || 0), 0);
+    html += folderHtml('fold-leaf cx-unm', `<b>Cancels for POs not uploaded</b> <span class="muted">— older POs not in the portal, not in the total</span>`,
+      `<span class="fs-n">${new Set(um.map(x => up(x.poNo))).size} POs · ${um.length} lines</span><span class="fs-amt muted">${rm(ua)}</span>`, () =>
+      `<table class="sub-item-table"><thead><tr><th>Cancel Date</th><th>Cancel Doc</th><th>PO No.</th><th>Creditor</th><th>Item</th><th class="text-right">Qty</th><th class="text-right">Amount (RM)</th></tr></thead><tbody>` +
+      um.slice().sort((a, b) => a.iso.localeCompare(b.iso)).map(x => `<tr><td>${esc(x.date)}</td><td>${esc(x.doc || '-')}</td><td><b>${esc(x.poNo)}</b>${locTag(x.loc)}</td>
+        <td class="pc-item">${esc(x.creditorName || x.creditorCode || '')}</td><td class="pc-item"><b>${esc(x.itemCode)}</b> ${esc(x.description || '')}</td>
+        <td class="text-right">${qtyFmt(x.qty)}</td><td class="text-right">${fmt(+x.amt || 0)}</td></tr>`).join('') + '</tbody></table>', true);
+  }
+  body.innerHTML = html;
+}
+
+// ====================================================
+// Sign-off block at the end of every printout
+// ====================================================
+function renderSignSettings() {
+  const a = document.getElementById('cfgSignRev'), b = document.getElementById('cfgSignApp');
+  if (!a || !b) return;
+  a.value = (store.meta && store.meta.signRev) || ''; b.value = (store.meta && store.meta.signApp) || '';
+}
+function saveSignNames() {
+  if (!db.current) return alert('Upload data first.');
+  const r = document.getElementById('cfgSignRev').value.trim(), a = document.getElementById('cfgSignApp').value.trim();
+  if (r) store.meta.signRev = r; else delete store.meta.signRev;
+  if (a) store.meta.signApp = a; else delete store.meta.signApp;
+  logAction(`Changed report sign-off names (Reviewed: ${r || 'blank'}, Approved: ${a || 'blank'})`, null, 'meta');
+  saveStore(); renderSyncBar();
+  const m = document.getElementById('signSavedMsg'); if (m) { m.innerText = '✓ Saved — click 💾 Save to Cloud'; setTimeout(() => m.innerText = '', 3000); }
+}
+function fillSignOff() {
+  const box = document.getElementById('signOff');
+  if (!box) return;
+  const meta = (store && store.meta) || {};
+  const me = currentUser ? (currentUser.name || currentUser.username) : '';
+  const cell = (lbl, name, date) => `<div class="so-box"><div class="so-lbl">${lbl}</div><div class="so-line"></div>
+    <div class="so-row"><span>Name:</span><b>${esc(name || '')}</b></div><div class="so-row"><span>Date:</span><b>${esc(date || '')}</b></div></div>`;
+  box.innerHTML = cell('Prepared by', me, '') + cell('Reviewed by', meta.signRev, '') + cell('Approved by', meta.signApp, '');
+}
+window.addEventListener('beforeprint', fillSignOff);
+// Push the sign-off to the BOTTOM of the last printed page: when the browser lays the page out for print,
+// measure the real page height (two markers with a page break between them) and where the sign-off lands,
+// then add space above it to fill the rest of that page. Works whatever the print scale is.
+(function () {
+  const mq = window.matchMedia && window.matchMedia('print');
+  if (!mq) return;
+  const place = e => {
+    const sp = document.getElementById('signSpacer'), so = document.getElementById('signOff');
+    if (!sp || !so) return;
+    sp.style.height = '0px';
+    if (!e.matches) return;
+    try {
+      const a = document.createElement('div'), b = document.createElement('div');
+      a.style.cssText = 'display:block;height:1px;margin:0;padding:0';
+      b.style.cssText = 'display:block;height:0;margin:0;padding:0;break-before:page;page-break-before:always';
+      const host = so.parentNode; host.prepend(b); host.prepend(a);
+      const y0 = a.getBoundingClientRect().top, pageH = b.getBoundingClientRect().top - y0;
+      a.remove(); b.remove();
+      if (!(pageH > 200)) return;
+      const top = so.getBoundingClientRect().top - y0;
+      const used = top % pageH, room = pageH - used - so.offsetHeight - 6;
+      if (room > 0 && room < pageH) sp.style.height = room + 'px';
+    } catch (err) {}
+  };
+  if (mq.addEventListener) mq.addEventListener('change', place); else if (mq.addListener) mq.addListener(place);
+})();
+
 function fmt4(v) { return (Math.round(v * 10000) / 10000).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
 
 
