@@ -5342,9 +5342,12 @@ window.addEventListener('beforeprint', fillSignOff);
       const y0 = a.getBoundingClientRect().top, pageH = b.getBoundingClientRect().top - y0;
       a.remove(); b.remove();
       if (!(pageH > 200)) return;
-      const top = so.getBoundingClientRect().top - y0;
-      const used = top % pageH, room = pageH - used - so.offsetHeight - 6;
-      if (room > 0 && room < pageH) sp.style.height = room + 'px';
+      // measure where the DATA ends (the spacer), not the sign-off: the sign-off may already have jumped to a new page
+      const end = sp.getBoundingClientRect().top - y0, need = so.offsetHeight + 8;
+      const used = end % pageH;
+      let room = pageH - used - need;                       // fits under the data on the same page
+      if (room < 0) room = (pageH - used) + (pageH - need);  // no space left: bottom of the next page
+      if (room > 0) sp.style.height = Math.floor(room) + 'px';
     } catch (err) {}
   };
   if (mq.addEventListener) mq.addEventListener('change', place); else if (mq.addListener) mq.addListener(place);
