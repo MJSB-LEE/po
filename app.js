@@ -5330,6 +5330,11 @@ window.addEventListener('beforeprint', fillSignOff);
     sp.style.height = '0px';
     if (!e.matches) return;
     try {
+      // if the report is wider than A4 the browser shrinks it after this point, so the position would be wrong:
+      // then simply keep the sign-off right after the data
+      const ca = document.querySelector('.content-area') || so.parentNode, PW = (210 - 12) * 96 / 25.4;
+      if (ca.scrollWidth > PW + 3 || document.documentElement.clientWidth > PW + 3) return;
+
       const a = document.createElement('div'), b = document.createElement('div');
       a.style.cssText = 'display:block;height:1px;margin:0;padding:0';
       b.style.cssText = 'display:block;height:0;margin:0;padding:0;break-before:page;page-break-before:always';
