@@ -3683,8 +3683,8 @@ function renderUserAdmin() {
       <button class="btn btn-settings btn-sm" onclick="changeMyPassword()">🔑 Change my password</button></div>`;
   const coKeys = Object.keys(db.companies || {}).sort();
   const coSel = u => `<select class="user-co" onchange="setUserDefaultCo('${esc(u.username)}', this.value)" title="Company this user always opens first after login">
-      <option value="">(last one they viewed)</option>${coKeys.map(k => `<option value="${esc(k)}"${u.defaultCo === k ? ' selected' : ''}>${esc(companyDisplay(k))}</option>`).join('')}</select>`;
-  html += `<table class="audit-table loc-master-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Opens company</th><th>Created</th><th></th></tr></thead><tbody>` +
+      <option value="">(last viewed)</option>${coKeys.map(k => `<option value="${esc(k)}"${u.defaultCo === k ? ' selected' : ''}>${esc(companyDisplay(k))}</option>`).join('')}</select>`;
+  html += `<table class="audit-table loc-master-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Opens</th><th>Created</th><th></th></tr></thead><tbody>` +
     usersDb.users.map(u => `<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : u.uploader ? 'Uploader' : 'Viewer'}</td><td>${coKeys.length > 1 ? coSel(u) : '<span class="muted">-</span>'}</td><td class="muted">${esc(u.createdAt || '')}</td>
       <td class="text-right">${me && me.admin ? `<button class="btn btn-settings btn-sm" onclick="resetUserPassword('${esc(u.username)}')">Reset password</button>
         ${u.username !== me.username ? `${u.admin ? '' : `<label class="auth-check" style="display:inline-flex;margin-right:6px;" title="Can upload and save"><input type="checkbox" ${u.uploader ? 'checked' : ''} onchange="toggleUploader('${esc(u.username)}')"> Uploader</label>`}<button class="btn btn-settings btn-sm" onclick="toggleAdmin('${esc(u.username)}')">${u.admin ? 'Remove admin' : 'Make admin'}</button>
