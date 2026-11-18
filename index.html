@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=5.1">
+  <link rel="stylesheet" href="styles.css?v=5.1b">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -41,6 +41,9 @@
       </li>
       <li class="menu-item child" data-parent="po" data-tab="tab-po-completed" onclick="switchNavTab('tab-po-completed', this)">
         PO Completed
+      </li>
+      <li class="menu-item child" data-parent="po" data-tab="tab-cancel-po" onclick="switchNavTab('tab-cancel-po', this)">
+        Cancelled PO
       </li>
 
       <li class="menu-group" data-group="grn" onclick="toggleMenuGroup('grn')"><span class="caret">▾</span><span>🚚</span> GRN</li>
@@ -261,6 +264,31 @@
             <div class="report-title">PRICE CHECK — GRN AMOUNT vs PO PRICE</div>
           </div>
           <div id="pcBody"></div>
+        </div>
+      </div>
+
+      <div id="tab-cancel-po" class="tab-view">
+        <div class="controls-card pout-controls">
+          <div class="sum-ctl">
+            <label><b>Cancel month</b></label> <span id="cxPick" class="sum-mpick"></span>
+            <label style="margin-left:10px;"><b>Show by</b></label>
+            <select id="cxGroup" onchange="renderActiveTab()"><option value="cred">Creditor</option><option value="loc">Location</option><option value="month">Month</option></select>
+            <button class="btn-small" onclick="poOpenAll('tab-cancel-po', true)">Open all</button>
+            <button class="btn-small" onclick="poOpenAll('tab-cancel-po', false)">Close all</button>
+          </div>
+          <div class="btn-actions">
+            <button class="btn btn-print" onclick="printFolders('tab-cancel-po', false)">🖨️ PDF / Print</button>
+            <button class="btn btn-print" onclick="printFolders('tab-cancel-po', true)">📄 PDF with details</button>
+            <button class="btn btn-excel" onclick="exportToExcel('cxTable', 'Cancelled_PO')">📊 Excel</button>
+          </div>
+        </div>
+        <div class="report-paper">
+          <div class="report-header">
+            <div class="company-name">MASIH JAYA SDN BHD</div>
+            <div class="report-title">CANCELLED PO LISTING</div>
+            <div class="report-location" id="cxSub"></div>
+          </div>
+          <div id="cxBody"></div>
         </div>
       </div>
 
@@ -492,6 +520,17 @@
   </div>
 
   <div class="report-paper settings-card">
+    <h3>✍️ Report Sign-off</h3>
+    <p class="muted" style="margin-bottom:10px;">Printed at the end of every report: <b>Prepared by</b> (the person printing), <b>Reviewed by</b> and <b>Approved by</b>. Leave a name empty to sign by hand. Saved for the company you are viewing.</p>
+    <div class="loc-add">
+      <label style="font-weight:700">Reviewed by</label><input type="text" id="cfgSignRev" placeholder="(blank — sign by hand)">
+      <label style="font-weight:700">Approved by</label><input type="text" id="cfgSignApp" placeholder="(blank — sign by hand)">
+      <button class="btn btn-excel" onclick="saveSignNames()">💾 Save</button>
+      <span id="signSavedMsg" style="color:#15803d;font-weight:700;"></span>
+    </div>
+  </div>
+
+  <div class="report-paper settings-card">
     <h3>🏷️ Report Heading</h3>
     <p class="muted" style="margin-bottom:14px;">Name printed at the top of every report for the company you are viewing.</p>
     <div class="loc-add">
@@ -502,6 +541,8 @@
   </div>
 </div>
 
+      <div id="signSpacer" class="sign-spacer"></div>
+      <div id="signOff" class="sign-off"></div>
     </div>
   </main>
 
@@ -537,7 +578,7 @@
   <script>if(/github\.io$/.test(location.hostname))document.getElementById('authHome').style.display='inline-block';</script>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=5.1"></script>
+  <script src="app.js?v=5.1b"></script>
   <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 5.1") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
