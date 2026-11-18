@@ -1104,3 +1104,25 @@ td.nw { white-space: nowrap; }
   .table-container > table.sum-table { border-collapse: separate; border-spacing: 0; border-top: 1px solid #000; border-left: 1px solid #000; }
   .table-container > table.sum-table > thead > tr > *, .table-container > table.sum-table > tbody > tr > * { border-width: 0 1px 1px 0; }
 }
+
+/* v5.0 Backup & Restore */
+.bk-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+@media (max-width: 1000px) { .bk-grid { grid-template-columns: 1fr; } }
+.bk-box { border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; background: #f8fafc; display: flex; flex-direction: column; }
+.bk-box h4 { margin: 0 0 6px; font-size: .95rem; color: #0f172a; }
+.bk-box p { margin: 0 0 10px; font-size: .8rem; color: #475569; line-height: 1.4; }
+.bk-box label { font-size: .72rem; font-weight: 700; color: #334155; margin-top: 4px; }
+.bk-box select, .bk-box input { padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: .82rem; margin: 2px 0 6px; width: 100%; box-sizing: border-box; }
+.bk-box .btn { align-self: flex-start; margin-top: auto; }
+.btn.bk-orange { background: #c2410c; color: #fff; }
+.btn.bk-orange:hover { background: #9a3412; }
+.bk-last { margin-top: 12px; font-size: .8rem; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 6px 10px; color: #065f46; }
+.bk-last.none { background: #fff7ed; border-color: #fed7aa; color: #9a3412; }
+table.bk-table { width: 100%; border-collapse: collapse; font-size: .8rem; margin: 8px 0; }
+table.bk-table th, table.bk-table td { border: 1px solid #e2e8f0; padding: 5px 8px; text-align: right; }
+table.bk-table th { background: #f1f5f9; }
+table.bk-table td:first-child, table.bk-table th:first-child { text-align: left; }
+.bk-opt { display: flex; gap: 8px; align-items: center; margin: 6px 0; font-size: .85rem; }
+.bk-opt select { padding: 4px 6px; }
+.bk-warn { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 8px 10px; color: #9a3412; font-size: .8rem; margin-top: 8px; }
+.gk-new { background: #dbeafe; color: #1d4ed8; }
