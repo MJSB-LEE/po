@@ -1,5 +1,3 @@
-
-
 :root {
   --primary: #0f172a;
   --primary-accent: #1e3a8a;
@@ -1167,3 +1165,10 @@ table.sub-item-table td.cx-item { min-width: 200px; max-width: 380px; }
   .rmc { min-width: 0 !important; gap: 2px !important; }
 }
 
+/* upload details */
+.log-det { font-weight: 700; color: #0369a1; margin-left: 6px; white-space: nowrap; text-decoration: none; }
+.log-det:hover { text-decoration: underline; }
+.log-cnt { display: flex; gap: 14px; margin: 6px 0 8px; font-weight: 700; font-size: .85rem; }
+.st-del { color: #b91c1c; font-weight: 700; white-space: nowrap; } .st-chg { color: #b45309; font-weight: 700; white-space: nowrap; } .st-add { color: #15803d; font-weight: 700; white-space: nowrap; }
+table.log-det-table td.log-why { min-width: 220px; white-space: normal; color: #475569; font-size: .8rem; }
+select.user-co { padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: .8rem; max-width: 220px; }
