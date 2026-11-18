@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=4.9">
+  <link rel="stylesheet" href="styles.css?v=5.1">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -485,6 +485,13 @@
   </div>
 
   <div class="report-paper settings-card">
+    <h3>💾 Backup &amp; Restore <span class="muted" style="font-size:.8rem;font-weight:600">(Admin only)</span></h3>
+    <p class="muted" style="margin-bottom:10px;">Keep a copy of the data on your own PC. Users, passwords and the GitHub key are never in the backup.</p>
+    <div id="backupCard"></div>
+    <input type="file" id="bkFile" accept=".json" style="display:none" onchange="openBackupFile(event)">
+  </div>
+
+  <div class="report-paper settings-card">
     <h3>🏷️ Report Heading</h3>
     <p class="muted" style="margin-bottom:14px;">Name printed at the top of every report for the company you are viewing.</p>
     <div class="loc-add">
@@ -530,7 +537,7 @@
   <script>if(/github\.io$/.test(location.hostname))document.getElementById('authHome').style.display='inline-block';</script>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=4.9"></script>
-  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 4.9") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+  <script src="app.js?v=5.1"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 5.1") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
