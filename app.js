@@ -198,7 +198,7 @@ function setLocSel(sel, silent, keepList) {
   locSel = sel;
   try {
     const all = JSON.parse(localStorage.getItem(LOCSEL_KEY) || '{}');
-    if (locSel) all[db.current] = [...locSel]; else delete all[db.current];
+    if (locSel) all[viewKey(db.current)] = [...locSel]; else { delete all[viewKey(db.current)]; if (currentUser) all[viewKey(db.current)] = 'ALL'; }
     localStorage.setItem(LOCSEL_KEY, JSON.stringify(all));
   } catch (e) {}
   renderLocMenu(keepList);
@@ -208,7 +208,8 @@ function setLocSel(sel, silent, keepList) {
 function restoreLocSel() {
   locSel = null;
   try {
-    const saved = (JSON.parse(localStorage.getItem(LOCSEL_KEY) || '{}'))[db.current];
+    const allSel = JSON.parse(localStorage.getItem(LOCSEL_KEY) || '{}');
+    const saved = allSel[viewKey(db.current)] || allSel[db.current];
     const codes = allLocCodes();
     if (Array.isArray(saved)) {
       const keep = saved.filter(c => codes.includes(c));
@@ -1233,9 +1234,22 @@ function companyDisplay(key) {
   const c = db.companies[key];
   return (c && c.meta.displayName) || key || 'My Company';
 }
+// Each user opens their OWN last company + locations (per user on this PC); saving never changes other users' view
+function viewKey(co) { return (currentUser ? currentUser.username + '|' : '') + co; }
+function rememberUserCompany(name) { try { if (currentUser) localStorage.setItem('acp_view:' + currentUser.username, name); } catch (e) {} }
+function applyUserView() {
+  if (!currentUser || !Object.keys(db.companies || {}).length) return;
+  const u = (usersDb.users || []).find(x => x.username === currentUser.username) || {};
+  let want = u.defaultCo && db.companies[u.defaultCo] ? u.defaultCo : null;
+  if (!want) { try { const v = localStorage.getItem('acp_view:' + currentUser.username); if (v && db.companies[v]) want = v; } catch (e) {} }
+  if (!want) want = Object.keys(db.companies).sort()[0];   // first time on this PC: first company, all locations
+  if (want !== db.current) switchCompany(want);
+  else { restoreLocSel(); refreshLocationUI(); renderActiveTab(); }
+}
 function switchCompany(name, keepView) {
   if (!db.companies[name]) return;
   db.current = name;
+  rememberUserCompany(name);
   store = db.companies[name];
   setCompanyName(companyDisplay(name));
   rebuildCombined();
@@ -3427,6 +3441,31 @@ window.addEventListener('beforeunload', e => {
 });
 
 // ---------- activity log (Settings) ----------
+// Upload history: click to see exactly which PO / GRN were new, changed or removed
+const logRefs = [];
+function logDetailsLink(e) {
+  if (!e.details || !e.details.length) return '';
+  logRefs.push(e);
+  return ` <a href="javascript:void(0)" class="log-det" onclick="showLogDetails(${logRefs.length - 1})">🔍 details</a>`;
+}
+function showLogDetails(i) {
+  const e = logRefs[i]; if (!e) return;
+  const word = e.kind === 'grn' ? 'GRN' : 'PO';
+  const ST = { del: ['➖ Removed', 'st-del'], chg: ['✏️ Changed', 'st-chg'], mov: ['⚠ Date changed', 'st-chg'], add: ['➕ New', 'st-add'] };
+  const order = { del: 0, chg: 1, mov: 2, add: 3 };
+  const L = e.details.slice().sort((a, b) => order[a.st] - order[b.st] || String(a.no).localeCompare(String(b.no)));
+  const cnt = k => L.filter(x => x.st === k).length;
+  const html = `<div class="up-period">${esc(e.action)}<br><span class="muted">Uploaded by <b>${esc(e.byName || e.by || (currentUser && currentUser.name) || '')}</b> · ${esc(e.savedAt || e.at || '')} · ${esc(companyDisplay(e.company))}</span></div>
+    <div class="log-cnt"><span class="st-del">➖ ${cnt('del')} removed</span><span class="st-chg">✏️ ${cnt('chg') + cnt('mov')} changed</span><span class="st-add">➕ ${cnt('add')} new</span></div>
+    <div class="table-container" style="max-height:55vh;overflow:auto"><table class="audit-table log-det-table"><thead><tr><th>Status</th><th>${word} No.</th><th>Date</th>${word === 'GRN' ? '<th>PO No.</th>' : ''}<th>Creditor</th><th>Location</th>
+      <th class="text-right">Lines</th><th class="text-right">Amount (RM)</th><th>Why / what changed</th></tr></thead><tbody>` +
+    L.map(x => `<tr><td><span class="${ST[x.st][1]}">${ST[x.st][0]}</span></td><td><b>${esc(x.no)}</b></td><td>${esc(x.date || '')}</td>${word === 'GRN' ? `<td>${esc(x.po || '-')}</td>` : ''}
+      <td><span class="wrap">${esc(x.cred || '')}</span></td><td>${esc(x.locs || '')}</td><td class="text-right">${x.lines || ''}</td>
+      <td class="text-right">${x.oldAmt != null && Math.abs(x.oldAmt - x.amt) > 0.005 ? `${fmt(x.oldAmt)} → <b>${fmt(x.amt)}</b>` : fmt(x.amt)}</td>
+      <td class="log-why"><span class="wrap">${esc(x.why || '')}</span></td></tr>`).join('') + '</tbody></table></div>' +
+    (e.detailsCut ? '<div class="muted small-text">Too many new documents to keep — only removed and changed ones are listed.</div>' : '');
+  upDialog('🔍 Upload details', html, [{ label: 'Close', value: 'ok', cls: 'btn-excel' }]);
+}
 function renderActivityLog() {
   const box = document.getElementById('activityLog');
   if (!box) return;
@@ -3435,8 +3474,8 @@ function renderActivityLog() {
   if (!rows.length && !pend.length) { box.innerHTML = '<p class="muted">No activity yet.</p>'; return; }
   box.innerHTML = `<div class="table-container" style="max-height:420px;overflow-y:auto;"><table class="audit-table loc-master-table">
     <thead><tr><th>Saved On</th><th>By</th><th>Company</th><th>What</th></tr></thead><tbody>` +
-    pend.map(e => `<tr class="log-pending"><td><i>not saved yet</i></td><td>${esc(currentUser ? currentUser.name : '')}</td><td>${esc(companyDisplay(e.company))}</td><td>${esc(e.action)}</td></tr>`).join('') +
-    rows.map(e => `<tr><td>${esc(e.savedAt || e.at || '')}</td><td><b>${esc(e.byName || e.by || '')}</b></td><td>${esc(e.company ? companyDisplay(e.company) : '')}</td><td>${esc(e.action)}</td></tr>`).join('') +
+    pend.map(e => `<tr class="log-pending"><td><i>not saved yet</i></td><td>${esc(currentUser ? currentUser.name : '')}</td><td>${esc(companyDisplay(e.company))}</td><td>${esc(e.action)}${logDetailsLink(e)}</td></tr>`).join('') +
+    rows.map(e => `<tr><td>${esc(e.savedAt || e.at || '')}</td><td><b>${esc(e.byName || e.by || '')}</b></td><td>${esc(e.company ? companyDisplay(e.company) : '')}</td><td>${esc(e.action)}${logDetailsLink(e)}</td></tr>`).join('') +
     '</tbody></table></div>';
 }
 
@@ -3573,6 +3612,7 @@ function setCurrentUser(u, remember) {
   } catch (e) {}
   hideAuth();
   renderUserBox(); renderUserAdmin(); renderSyncBar(); renderActivityLog();
+  if (window.__appReady) applyUserView();
 }
 function restoreSession() {
   let name = null;
@@ -3641,8 +3681,11 @@ function renderUserAdmin() {
   if (me) html += `<div class="loc-add" style="margin:0 0 14px 0;">
       <span style="flex:1;">Logged in as <b>${esc(me.name)}</b> (${esc(me.username)})</span>
       <button class="btn btn-settings btn-sm" onclick="changeMyPassword()">🔑 Change my password</button></div>`;
-  html += `<table class="audit-table loc-master-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead><tbody>` +
-    usersDb.users.map(u => `<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : u.uploader ? 'Uploader' : 'Viewer'}</td><td class="muted">${esc(u.createdAt || '')}</td>
+  const coKeys = Object.keys(db.companies || {}).sort();
+  const coSel = u => `<select class="user-co" onchange="setUserDefaultCo('${esc(u.username)}', this.value)" title="Company this user always opens first after login">
+      <option value="">(last one they viewed)</option>${coKeys.map(k => `<option value="${esc(k)}"${u.defaultCo === k ? ' selected' : ''}>${esc(companyDisplay(k))}</option>`).join('')}</select>`;
+  html += `<table class="audit-table loc-master-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Opens company</th><th>Created</th><th></th></tr></thead><tbody>` +
+    usersDb.users.map(u => `<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : u.uploader ? 'Uploader' : 'Viewer'}</td><td>${coKeys.length > 1 ? coSel(u) : '<span class="muted">-</span>'}</td><td class="muted">${esc(u.createdAt || '')}</td>
       <td class="text-right">${me && me.admin ? `<button class="btn btn-settings btn-sm" onclick="resetUserPassword('${esc(u.username)}')">Reset password</button>
         ${u.username !== me.username ? `${u.admin ? '' : `<label class="auth-check" style="display:inline-flex;margin-right:6px;" title="Can upload and save"><input type="checkbox" ${u.uploader ? 'checked' : ''} onchange="toggleUploader('${esc(u.username)}')"> Uploader</label>`}<button class="btn btn-settings btn-sm" onclick="toggleAdmin('${esc(u.username)}')">${u.admin ? 'Remove admin' : 'Make admin'}</button>
         <button class="btn btn-danger btn-sm" onclick="deleteUser('${esc(u.username)}')">Delete</button>` : ''}` : ''}</td></tr>`).join('') +
@@ -3698,6 +3741,9 @@ async function changeMyPassword() {
 }
 async function toggleUploader(username) {
   await writeUsers(d => { const u = d.users.find(x => x.username === username); if (!u) return false; u.uploader = !u.uploader; });
+}
+async function setUserDefaultCo(username, co) {
+  await writeUsers(d => { const u = d.users.find(x => x.username === username); if (!u) return false; if (co) u.defaultCo = co; else delete u.defaultCo; });
 }
 async function toggleAdmin(username) {
   await writeUsers(d => { const u = d.users.find(x => x.username === username); if (!u) return false; u.admin = !u.admin; });
@@ -5049,6 +5095,18 @@ async function reviewAndApply(j) {
   store.meta[kind + 'LoadedAt'] = new Date().toLocaleString('en-GB');
   const what = first ? 'first upload' : v === 'all' ? 'replaced all' : D.same ? 'no change' : `${period}: +${D.added.length} new, ${D.changed.length} changed, ${D.removed.length} removed${D.moved.length ? `, ${D.moved.length} date changed` : ''}`;
   logAction(`Uploaded ${word} file "${file.name}" (${items.length} lines, ${what})`, null, kind);
+  if (!first && v === 'ok' && !D.same) {
+    const cxPOs = new Set((store.cxLines || []).map(x => up(x.poNo)));
+    const r2 = n => Math.round((+n || 0) * 100) / 100;
+    const why = d => kind === 'po' ? (cxPOs.has(up(d.no)) ? 'Cancelled in AutoCount (in the Cancelled PO file)' : 'Not in the new AutoCount file — deleted, or its date was changed to another month')
+      : 'Not in the new AutoCount file — GRN deleted, or its date was changed to another month';
+    const pick = (L, st) => L.map(d => ({ st, no: d.no, date: d.date, cred: d.cred, po: d.po || undefined, locs: d.locs || undefined, amt: r2(d.amt),
+      oldAmt: d.oldAmt != null ? r2(d.oldAmt) : undefined, lines: d.lines, why: st === 'del' ? why(d) : (d.what || []).join('; ') || undefined }));
+    let det = pick(D.removed, 'del').concat(pick(D.changed, 'chg'), pick(D.moved, 'mov'), pick(D.added, 'add'));
+    const e = pendingLog[pendingLog.length - 1];
+    if (det.length > 400) { det = det.filter(x => x.st !== 'add').slice(0, 400); e.detailsCut = true; }
+    e.details = det; e.kind = kind; e.period = period;
+  }
   return true;
 }
 
@@ -5138,8 +5196,8 @@ function renderUploadPage() {
     const rows = activityLog.filter(isUp).slice().reverse().slice(0, 12);
     rc.innerHTML = !pend.length && !rows.length ? '<p class="muted">No uploads recorded yet for this company.</p>' :
       `<table class="audit-table loc-master-table"><thead><tr><th>When</th><th>By</th><th>What</th></tr></thead><tbody>` +
-      pend.map(e => `<tr class="log-pending"><td><i>not saved yet</i></td><td>${esc(currentUser ? currentUser.name : '')}</td><td>${esc(e.action)}</td></tr>`).join('') +
-      rows.map(e => `<tr><td>${esc(e.savedAt || e.at || '')}</td><td><b>${esc(e.byName || e.by || '')}</b></td><td>${esc(e.action)}</td></tr>`).join('') + '</tbody></table>';
+      pend.map(e => `<tr class="log-pending"><td><i>not saved yet</i></td><td>${esc(currentUser ? currentUser.name : '')}</td><td>${esc(e.action)}${logDetailsLink(e)}</td></tr>`).join('') +
+      rows.map(e => `<tr><td>${esc(e.savedAt || e.at || '')}</td><td><b>${esc(e.byName || e.by || '')}</b></td><td>${esc(e.action)}${logDetailsLink(e)}</td></tr>`).join('') + '</tbody></table>';
   }
 }
 
@@ -5318,23 +5376,23 @@ function fillSignOff() {
   box.innerHTML = cell('Prepared by', me, '') + cell('Reviewed by', meta.signRev, '') + cell('Approved by', meta.signApp, '');
 }
 window.addEventListener('beforeprint', fillSignOff);
-// Push the sign-off to the BOTTOM of the last printed page: when the browser lays the page out for print,
-// measure the real page height (two markers with a page break between them) and where the sign-off lands,
-// then add space above it to fill the rest of that page. Works whatever the print scale is.
+// Sign-off at the BOTTOM of the last printed page, never alone on a page.
+// When the browser lays the page out for print we measure the real page height (two markers with a page break
+// between them) and where the data ends. If the sign-off fits under the data: add space so it sits at the bottom.
+// If not: move the Cancelled PO list (or the last few rows of the last table) to a new page together with the sign-off.
 (function () {
   const mq = window.matchMedia && window.matchMedia('print');
   if (!mq) return;
+  let moved = [];
   const place = e => {
     const sp = document.getElementById('signSpacer'), so = document.getElementById('signOff');
     if (!sp || !so) return;
     sp.style.height = '0px';
+    moved.forEach(el => { el.style.breakBefore = ''; el.style.pageBreakBefore = ''; }); moved = [];
     if (!e.matches) return;
     try {
-      // if the report is wider than A4 the browser shrinks it after this point, so the position would be wrong:
-      // then simply keep the sign-off right after the data
       const ca = document.querySelector('.content-area') || so.parentNode, PW = (210 - 12) * 96 / 25.4;
-      if (ca.scrollWidth > PW + 3 || document.documentElement.clientWidth > PW + 3) return;
-
+      if (ca.scrollWidth > PW + 3 || document.documentElement.clientWidth > PW + 3) return;   // too wide: browser will shrink, keep after data
       const a = document.createElement('div'), b = document.createElement('div');
       a.style.cssText = 'display:block;height:1px;margin:0;padding:0';
       b.style.cssText = 'display:block;height:0;margin:0;padding:0;break-before:page;page-break-before:always';
@@ -5342,11 +5400,26 @@ window.addEventListener('beforeprint', fillSignOff);
       const y0 = a.getBoundingClientRect().top, pageH = b.getBoundingClientRect().top - y0;
       a.remove(); b.remove();
       if (!(pageH > 200)) return;
-      // measure where the DATA ends (the spacer), not the sign-off: the sign-off may already have jumped to a new page
-      const end = sp.getBoundingClientRect().top - y0, need = so.offsetHeight + 8;
-      const used = end % pageH;
-      let room = pageH - used - need;                       // fits under the data on the same page
-      if (room < 0) room = (pageH - used) + (pageH - need);  // no space left: bottom of the next page
+      const need = so.offsetHeight + 8;
+      const roomNow = () => { const used = (sp.getBoundingClientRect().top - y0) % pageH; return pageH - used - need; };
+      let room = roomNow();
+      if (room < 0) {
+        const tab = document.querySelector('.tab-view.active');
+        const pageOf = el => Math.floor((el.getBoundingClientRect().top - y0) / pageH);
+        const cx = tab && tab.querySelector('.sum-cancels');
+        let target = null;
+        if (cx && cx.offsetHeight + need < pageH - 10) target = cx;   // whole Cancelled PO list goes with the sign-off
+        else if (tab) {                                              // else: the last few rows of the last table
+          const tables = [...tab.querySelectorAll('table')].filter(t => t.getClientRects().length && !t.closest('.detail-subrow'));
+          const t = tables[tables.length - 1];
+          const rows = t ? [...t.querySelectorAll(':scope > tbody > tr')].filter(r => r.getClientRects().length) : [];
+          if (rows.length > 1) target = rows[Math.max(1, rows.length - 4)];
+        }
+        if (target && pageOf(target) >= 0) {
+          target.style.breakBefore = 'page'; target.style.pageBreakBefore = 'always'; moved.push(target);
+          room = roomNow();
+        }
+      }
       if (room > 0) sp.style.height = Math.floor(room) + 'px';
     } catch (err) {}
   };
@@ -5610,6 +5683,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderSyncBar();
   if (!usersDb.users.length) { if (cloudMode && !ghToken() && (window.__cloudEmpty || window.__cloudError)) showCloudStartScreen(); else showAuth('setup'); }
   else if (!restoreSession()) showAuth('login');
+  window.__appReady = true;
+  if (currentUser) applyUserView();
   renderUserBox();
   renderActivityLog();
 });
