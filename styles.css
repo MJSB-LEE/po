@@ -1154,3 +1154,13 @@ table.sub-item-table td.cx-item { min-width: 200px; max-width: 380px; }
 @media print { .sum-keep { break-inside: avoid; page-break-inside: avoid; } }
 
 .sign-spacer { display: none; height: 0; }
+@media print {
+  /* keep every report inside the A4 width so the browser never shrinks the page (the sign-off position depends on it) */
+
+  table.sum-table .rmc { gap: 2px; min-width: 0; }
+}
+@media print {
+  #locSummaryTable { font-size: 7pt !important; }
+  #locSummaryTable th, #locSummaryTable td { padding: 2px 3px !important; font-size: 7pt !important; }
+  .rmc { min-width: 0 !important; gap: 2px !important; }
+}
