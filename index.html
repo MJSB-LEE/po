@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AutoCount PO Audit</title>
-  <link rel="stylesheet" href="styles.css?v=5.1f">
+  <link rel="stylesheet" href="styles.css?v=5.2">
   <!-- SheetJS for Excel Exports -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -67,6 +67,7 @@
   <!-- Main Container -->
   <main class="app-main">
     <!-- Header Topbar Controls -->
+    <div class="sticky-top" id="stickyTop">
     <header class="app-topbar">
       <div class="page-title" id="pageTitleDisplay">6-Month PO Transfer & Outstanding Audit</div>
 
@@ -109,6 +110,7 @@
       </div>
     </header>
     <div id="syncBar" class="sync-bar"></div>
+    </div>
 
     <div class="content-area">
       <!-- Dynamic KPI Cards -->
@@ -464,7 +466,15 @@
 
 <!-- TAB 9: Settings & Locations -->
 <div id="tab-settings" class="tab-view">
-  <div class="report-paper settings-card">
+  <div class="stab-bar" id="stabBar">
+    <button data-stab="users" onclick="showSettingsTab('users')">👤 Users</button>
+    <button data-stab="company" onclick="showSettingsTab('company')">🏢 Company &amp; Locations</button>
+    <button data-stab="creditors" onclick="showSettingsTab('creditors')">📇 Creditors</button>
+    <button data-stab="reports" onclick="showSettingsTab('reports')">🖨️ Reports</button>
+    <button data-stab="backup" onclick="showSettingsTab('backup')">💾 Backup &amp; Cloud</button>
+    <button data-stab="log" onclick="showSettingsTab('log')">📜 Activity Log</button>
+  </div>
+  <div class="report-paper settings-card" data-stab="company">
     <h3>📍 Locations</h3>
     <p class="muted" style="margin-bottom:10px;">Locations are read automatically from the <b>Location</b> column in your PO and GRN files. Names come from the AutoCount <b>Stock Location Listing</b> — upload it again whenever you add a new location in AutoCount.</p>
     <div class="loc-add" style="margin:0 0 14px 0;">
@@ -476,61 +486,61 @@
     <div id="locationList"></div>
   </div>
 
-  <div class="report-paper settings-card">
+  <div class="report-paper settings-card" data-stab="creditors">
     <h3>🏷️ Creditor Name Rules</h3>
     <p class="muted" style="margin-bottom:10px;">Group many shop names under one creditor in every report — e.g. every "Shopee …" shop shows as <b>Shopee</b>. The PO's creditor code is used first; these rules only change how the name is shown and grouped.</p>
     <div id="credRules"></div>
   </div>
 
-  <div class="report-paper settings-card cloud-only" id="cloudCard">
+  <div class="report-paper settings-card cloud-only" id="cloudCard" data-stab="backup">
     <h3>☁️ Cloud (GitHub)</h3>
     <p class="muted" style="margin-bottom:10px;">The data is one locked file on GitHub. Everyone can open the website, but only users who log in with their <b>username + password</b> can read it. To <b>save</b>, a PC needs the GitHub key.</p>
     <div id="cloudInfo"></div>
   </div>
 
-  <div class="report-paper settings-card folder-only">
+  <div class="report-paper settings-card folder-only" data-stab="backup">
     <h3>📁 Shared Folder (this PC)</h3>
     <p class="muted" style="margin-bottom:10px;">Where this PC saves the data when you click 💾 Save. Each PC chooses it once.</p>
     <div id="folderInfo"></div>
   </div>
 
-  <div class="report-paper settings-card">
+  <div class="report-paper settings-card" data-stab="users">
     <h3>👤 Users</h3>
     <p class="muted" style="margin-bottom:10px;">Everyone logs in so the portal knows who uploaded and saved the data. The user list is saved together with the data (shared folder or cloud).</p>
     <div id="userAdmin"></div>
   </div>
 
-  <div class="report-paper settings-card">
+  <div class="report-paper settings-card" data-stab="log">
     <h3>🕘 Activity Log</h3>
     <p class="muted" style="margin-bottom:10px;">Every save to the shared folder: who, when and what was uploaded.</p>
     <div id="activityLog"></div>
   </div>
 
-  <div class="report-paper settings-card">
+  <div class="report-paper settings-card" data-stab="company">
     <h3>🏢 Companies</h3>
     <p class="muted" style="margin-bottom:10px;">Each company is detected from the name at the top of the AutoCount CSV, and its data is kept separately in the shared data file. Upload another company's files and they are added here without touching the others.</p>
     <div id="companyList"></div>
   </div>
 
-  <div class="report-paper settings-card">
+  <div class="report-paper settings-card" data-stab="backup">
     <h3>💾 Backup &amp; Restore <span class="muted" style="font-size:.8rem;font-weight:600">(Admin only)</span></h3>
     <p class="muted" style="margin-bottom:10px;">Keep a copy of the data on your own PC. Users, passwords and the GitHub key are never in the backup.</p>
     <div id="backupCard"></div>
     <input type="file" id="bkFile" accept=".json" style="display:none" onchange="openBackupFile(event)">
   </div>
 
-  <div class="report-paper settings-card">
+  <div class="report-paper settings-card" data-stab="reports">
     <h3>✍️ Report Sign-off</h3>
-    <p class="muted" style="margin-bottom:10px;">Printed at the end of every report: <b>Prepared by</b> (the person printing), <b>Reviewed by</b> and <b>Approved by</b>. Leave a name empty to sign by hand. Saved for the company you are viewing.</p>
+    <p class="muted" style="margin-bottom:10px;">Printed at the end of every report: <b>Prepared by</b> (the person printing), <b>Reviewed by</b> and <b>Authorized by</b>. Leave a name empty to sign by hand. Saved for the company you are viewing.</p>
     <div class="loc-add">
       <label style="font-weight:700">Reviewed by</label><input type="text" id="cfgSignRev" placeholder="(blank — sign by hand)">
-      <label style="font-weight:700">Approved by</label><input type="text" id="cfgSignApp" placeholder="(blank — sign by hand)">
+      <label style="font-weight:700">Authorized by</label><input type="text" id="cfgSignApp" placeholder="(blank — sign by hand)">
       <button class="btn btn-excel" onclick="saveSignNames()">💾 Save</button>
       <span id="signSavedMsg" style="color:#15803d;font-weight:700;"></span>
     </div>
   </div>
 
-  <div class="report-paper settings-card">
+  <div class="report-paper settings-card" data-stab="reports">
     <h3>🏷️ Report Heading</h3>
     <p class="muted" style="margin-bottom:14px;">Name printed at the top of every report for the company you are viewing.</p>
     <div class="loc-add">
@@ -578,7 +588,7 @@
   <script>if(/github\.io$/.test(location.hostname))document.getElementById('authHome').style.display='inline-block';</script>
 
   <script src="portal-config.js?v=1" onerror="void 0"></script>
-  <script src="app.js?v=5.1f"></script>
-  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 5.1") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
+  <script src="app.js?v=5.2"></script>
+  <script>if (typeof APP_VERSION === "undefined" || APP_VERSION.indexOf("Version 5.2") !== 0) { document.addEventListener("DOMContentLoaded", function () { alert("app.js is an OLD version. Copy the new app.js into this folder (replace), then press Ctrl+F5."); }); }</script>
 </body>
 </html>
