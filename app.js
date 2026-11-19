@@ -6,7 +6,7 @@
 // for location descriptions.
 // ====================================================
 
-const APP_VERSION = 'Version 5.1 · 18/11/2026';
+const APP_VERSION = 'Version 5.2 · 19/11/2026';
 let rawPOList = [];     // one entry per PO line  (has .loc = location code)
 let rawGRNList = [];    // one entry per GRN line (has .loc = location code)
 let dataVersion = 0;    // bumps whenever data changes (for pickers)
@@ -419,7 +419,8 @@ const RENDERERS = {
   'tab-upload': () => { updateUploadSummary(); renderUploadPage(); updateKPIs(getScopedPOLines()); },
   'tab-settings': () => {
     if (cloudMode) renderCloudInfo(); else renderFolderInfo().catch(e => { const b = document.getElementById('folderInfo'); if (b) b.innerHTML = '<p class="note-warn">Error: ' + esc(e.message) + '</p>'; });
-    renderLocationSettings(); renderCompanyUI(); renderUserAdmin(); renderActivityLog(); renderCredRules(); renderBackupCard(); renderSignSettings(); updateKPIs(getScopedPOLines());
+    renderLocationSettings(); renderCompanyUI(); renderUserAdmin(); renderActivityLog(); renderCredRules(); renderBackupCard(); renderSignSettings();
+    { let k = 'users'; try { k = localStorage.getItem('acp_settings_tab') || 'users'; } catch (e) {} showSettingsTab(k); } updateKPIs(getScopedPOLines());
   }
 };
 
@@ -3411,8 +3412,9 @@ function discardDraft() {
 function renderSyncBar() {
   const bar = document.getElementById('syncBar');
   if (!bar) return;
+  const nCh = shared.summary ? String(shared.summary).split(/;\s*/).filter(Boolean).length : 0;
   const last = shared.savedAt
-    ? `☁️ Last saved by <b>${esc(shared.savedByName || shared.savedBy)}</b> on <b>${esc(shared.savedAt)}</b>${shared.summary ? ` <span class="muted">— ${esc(shared.summary)}</span>` : ''}`
+    ? `☁️ Last saved by <b>${esc(shared.savedByName || shared.savedBy)}</b> · <b>${esc(String(shared.savedAt).replace(/:\d\d$/, ''))}</b>${nCh ? ` · <a href="javascript:void(0)" class="sync-more" title="${esc(shared.summary)}" onclick="this.closest('.sync-bar').classList.toggle('show-sum')">${nCh} change${nCh > 1 ? 's' : ''} ▾</a><span class="sync-sum muted"> — ${esc(shared.summary)}</span>` : ''}`
     : (cloudMode ? '☁️ <b>Nothing saved to the cloud yet.</b>' : '☁️ <b>Nothing saved to the shared folder yet.</b>');
   let warn = '';
   if (dirty) warn = `<span class="sync-dirty">⚠ You have unsaved changes (${visibleLog(pendingLog).length || 1}) — others cannot see them yet.</span>`;
@@ -3466,6 +3468,22 @@ function showLogDetails(i) {
     (e.detailsCut ? '<div class="muted small-text">Too many new documents to keep — only removed and changed ones are listed.</div>' : '');
   upDialog('🔍 Upload details', html, [{ label: 'Close', value: 'ok', cls: 'btn-excel' }]);
 }
+// Settings: one tab at a time instead of one long page
+function showSettingsTab(k) {
+  const tab = document.getElementById('tab-settings'); if (!tab) return;
+  const keys = [...tab.querySelectorAll('#stabBar button')].map(b => b.dataset.stab);
+  if (!keys.includes(k)) k = 'users';
+  tab.querySelectorAll('.settings-card[data-stab]').forEach(c => c.classList.toggle('stab-hide', c.dataset.stab !== k));
+  tab.querySelectorAll('#stabBar button').forEach(b => b.classList.toggle('active', b.dataset.stab === k));
+  try { localStorage.setItem('acp_settings_tab', k); } catch (e) {}
+}
+// keep the column headings just under the fixed top bar
+function updateStickyOffset() {
+  const t = document.getElementById('stickyTop');
+  document.documentElement.style.setProperty('--stickH', (t ? t.offsetHeight : 0) + 'px');
+}
+window.addEventListener('resize', updateStickyOffset);
+if (window.ResizeObserver) window.addEventListener('DOMContentLoaded', () => { const t = document.getElementById('stickyTop'); if (t) new ResizeObserver(updateStickyOffset).observe(t); });
 function renderActivityLog() {
   const box = document.getElementById('activityLog');
   if (!box) return;
@@ -3685,7 +3703,7 @@ function renderUserAdmin() {
   const coSel = u => `<select class="user-co" onchange="setUserDefaultCo('${esc(u.username)}', this.value)" title="Company this user always opens first after login">
       <option value="">(last viewed)</option>${coKeys.map(k => `<option value="${esc(k)}"${u.defaultCo === k ? ' selected' : ''}>${esc(companyDisplay(k))}</option>`).join('')}</select>`;
   html += `<table class="audit-table loc-master-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Opens</th><th>Created</th><th></th></tr></thead><tbody>` +
-    usersDb.users.map(u => `<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : u.uploader ? 'Uploader' : 'Viewer'}</td><td>${coKeys.length > 1 ? coSel(u) : '<span class="muted">-</span>'}</td><td class="muted">${esc(u.createdAt || '')}</td>
+    usersDb.users.map(u => `<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td><td>${u.admin ? 'Admin' : u.uploader ? 'Uploader' : 'Viewer'}</td><td>${coKeys.length > 1 ? coSel(u) : '<span class="muted">-</span>'}</td><td class="muted" title="${esc(u.createdAt || '')}">${esc(String(u.createdAt || '').split(/[ ,]+/)[0])}</td>
       <td class="text-right">${me && me.admin ? `<button class="btn btn-settings btn-sm" onclick="resetUserPassword('${esc(u.username)}')">Reset password</button>
         ${u.username !== me.username ? `${u.admin ? '' : `<label class="auth-check" style="display:inline-flex;margin-right:6px;" title="Can upload and save"><input type="checkbox" ${u.uploader ? 'checked' : ''} onchange="toggleUploader('${esc(u.username)}')"> Uploader</label>`}<button class="btn btn-settings btn-sm" onclick="toggleAdmin('${esc(u.username)}')">${u.admin ? 'Remove admin' : 'Make admin'}</button>
         <button class="btn btn-danger btn-sm" onclick="deleteUser('${esc(u.username)}')">Delete</button>` : ''}` : ''}</td></tr>`).join('') +
@@ -5362,7 +5380,7 @@ function saveSignNames() {
   const r = document.getElementById('cfgSignRev').value.trim(), a = document.getElementById('cfgSignApp').value.trim();
   if (r) store.meta.signRev = r; else delete store.meta.signRev;
   if (a) store.meta.signApp = a; else delete store.meta.signApp;
-  logAction(`Changed report sign-off names (Reviewed: ${r || 'blank'}, Approved: ${a || 'blank'})`, null, 'meta');
+  logAction(`Changed report sign-off names (Reviewed: ${r || 'blank'}, Authorized: ${a || 'blank'})`, null, 'meta');
   saveStore(); renderSyncBar();
   const m = document.getElementById('signSavedMsg'); if (m) { m.innerText = '✓ Saved — click 💾 Save to Cloud'; setTimeout(() => m.innerText = '', 3000); }
 }
@@ -5373,7 +5391,7 @@ function fillSignOff() {
   const me = currentUser ? (currentUser.name || currentUser.username) : '';
   const cell = (lbl, name, date) => `<div class="so-box"><div class="so-lbl">${lbl}</div><div class="so-line"></div>
     <div class="so-row"><span>Name:</span><b>${esc(name || '')}</b></div><div class="so-row"><span>Date:</span><b>${esc(date || '')}</b></div></div>`;
-  box.innerHTML = cell('Prepared by', me, '') + cell('Reviewed by', meta.signRev, '') + cell('Approved by', meta.signApp, '');
+  box.innerHTML = cell('Prepared by', me, '') + cell('Reviewed by', meta.signRev, '') + cell('Authorized by', meta.signApp, '');
 }
 window.addEventListener('beforeprint', fillSignOff);
 // Sign-off at the BOTTOM of the last printed page, never alone on a page.
