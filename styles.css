@@ -1189,7 +1189,9 @@ select.user-co { padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 6px
 /* v5.2 fixed top bar while scrolling */
 @media screen {
   .sticky-top { position: sticky; top: 0; z-index: 40; box-shadow: 0 2px 6px rgba(15,23,42,.08); }
-  .table-container > table > thead { top: var(--stickH, 0px) !important; }
+  .table-container > table > thead { top: 0 !important; }
+  /* only page tables sit under the fixed top bar; tables inside their own scroll box (Activity Log, pop-ups) stick at the box top */
+  .tab-view .table-container:not([style*="overflow"]) > table > thead { top: var(--stickH, 0px) !important; }
   .sync-bar { padding-top: 6px; padding-bottom: 6px; }
   .sync-text { line-height: 1.5; }
   .sync-sum { display: none; }
